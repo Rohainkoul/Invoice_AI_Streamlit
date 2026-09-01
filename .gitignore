@@ -1,0 +1,13 @@
+.venv/
+.invoice_ai_cache/
+
+__pycache__/
+*.pyc
+*.pyo
+
+.streamlit/secrets.toml
+
+requirements_full.txt
+
+.DS_Store
+Thumbs.db
