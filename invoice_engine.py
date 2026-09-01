@@ -43,6 +43,7 @@ EXPECTED_FIELDS = [
     "PAYMENT_TERMS",
 ]
 
+
 EXPECTED_LABELS = ["O"]
 
 for field in EXPECTED_FIELDS:
@@ -53,52 +54,68 @@ for field in EXPECTED_FIELDS:
         ]
     )
 
-EXPECTED_NUM_LABELS = len(EXPECTED_LABELS)
+
+EXPECTED_NUM_LABELS = len(
+    EXPECTED_LABELS
+)
 
 
 # ============================================================
 # PROJECT PATHS
 # ============================================================
 
-PROJECT_ROOT = Path(__file__).resolve().parent
+PROJECT_ROOT = (
+    Path(__file__)
+    .resolve()
+    .parent
+)
+
 
 ARTIFACTS_DIR = (
     PROJECT_ROOT
     / "artifacts"
 )
 
+
 CACHE_ROOT = (
     PROJECT_ROOT
     / ".invoice_ai_cache"
 )
+
 
 MODEL_CACHE_ROOT = (
     CACHE_ROOT
     / "model"
 )
 
+
 RUNTIME_CACHE_ROOT = (
     CACHE_ROOT
     / "production_runtime"
 )
+
 
 COLAB_COMPAT_ROOT = (
     CACHE_ROOT
     / "colab_content"
 )
 
+
 RUNTIME_SIGNATURE_FILE = (
     RUNTIME_CACHE_ROOT
     / ".runtime_signature.json"
 )
 
+
 MODEL_ZIP_NAME = (
     "Invoice_AI_V3_AllRounder_FINAL.zip"
 )
 
+
 RUNTIME_ZIP_NAME = (
     "Invoice_AI_V3_FINAL_Production_Runtime.zip"
 )
+
 
 CANONICAL_RUNTIME_LOADER = (
     "load_v3_final_runtime.py"
@@ -119,29 +136,36 @@ def _find_artifact(
         / exact_name
     )
 
+
     if exact_path.is_file():
         return exact_path
 
-    matches = sorted(
+
+    candidates = sorted(
         ARTIFACTS_DIR.glob(
             pattern
         )
     )
 
-    if len(matches) == 1:
-        return matches[0]
 
-    if not matches:
+    if len(candidates) == 1:
+        return candidates[0]
+
+
+    if not candidates:
+
         raise FileNotFoundError(
             "Required artifact was not found.\n\n"
             f"Expected:\n{exact_path}"
         )
 
+
     raise RuntimeError(
         "Multiple matching artifact ZIPs were found.\n\n"
-        + "\n".join(
+        +
+        "\n".join(
             str(path)
-            for path in matches
+            for path in candidates
         )
     )
 
@@ -174,17 +198,24 @@ def _validate_zip_members(
 
         normalized = (
             member.filename
-            .replace("\\", "/")
+            .replace(
+                "\\",
+                "/",
+            )
         )
+
 
         path = PurePosixPath(
             normalized
         )
 
+
         if (
             path.is_absolute()
-            or ".." in path.parts
+            or
+            ".." in path.parts
         ):
+
             raise RuntimeError(
                 "Unsafe path inside ZIP:\n"
                 f"{member.filename}"
@@ -198,19 +229,27 @@ def _extract_fresh(
 
     temporary = (
         destination.parent
-        / f"{destination.name}.__extracting__"
+        /
+        (
+            destination.name
+            + ".__extracting__"
+        )
     )
 
+
     if temporary.exists():
+
         shutil.rmtree(
             temporary,
             ignore_errors=True,
         )
 
+
     temporary.mkdir(
         parents=True,
         exist_ok=True,
     )
+
 
     try:
 
@@ -223,9 +262,11 @@ def _extract_fresh(
                 archive
             )
 
+
             archive.extractall(
                 temporary
             )
+
 
         if destination.exists():
 
@@ -234,9 +275,11 @@ def _extract_fresh(
                 ignore_errors=True,
             )
 
+
         temporary.replace(
             destination
         )
+
 
     except Exception:
 
@@ -256,19 +299,24 @@ def _candidate_is_model(
     candidate: Path,
 ) -> bool:
 
-    if not (
+    config_file = (
         candidate
         / "config.json"
-    ).is_file():
+    )
 
+
+    if not config_file.is_file():
         return False
+
 
     return (
         (
             candidate
             / "model.safetensors"
         ).is_file()
+
         or
+
         (
             candidate
             / "pytorch_model.bin"
@@ -284,7 +332,9 @@ def find_model_directory() -> Path:
             "Model cache does not exist."
         )
 
+
     matches = []
+
 
     for config_file in (
         MODEL_CACHE_ROOT.rglob(
@@ -296,12 +346,15 @@ def find_model_directory() -> Path:
             config_file.parent
         )
 
+
         if _candidate_is_model(
             candidate
         ):
+
             matches.append(
                 candidate
             )
+
 
     if not matches:
 
@@ -310,6 +363,7 @@ def find_model_directory() -> Path:
             "config.json + model weights "
             "was found."
         )
+
 
     matches.sort(
         key=lambda path: (
@@ -322,6 +376,7 @@ def find_model_directory() -> Path:
         )
     )
 
+
     return matches[0]
 
 
@@ -329,7 +384,9 @@ def prepare_model() -> Path:
 
     try:
 
-        return find_model_directory()
+        return (
+            find_model_directory()
+        )
 
     except (
         FileNotFoundError,
@@ -338,28 +395,33 @@ def prepare_model() -> Path:
 
         pass
 
+
     print(
         "\nExtracting Final V3 model..."
     )
+
 
     _extract_fresh(
         get_model_zip(),
         MODEL_CACHE_ROOT,
     )
 
+
     model_dir = (
         find_model_directory()
     )
+
 
     print(
         "✅ Model extraction complete"
     )
 
+
     return model_dir
 
 
 # ============================================================
-# MODEL LOADER + STRICT V3 AUDIT
+# FINAL V3 MODEL
 # ============================================================
 
 @lru_cache(maxsize=1)
@@ -369,9 +431,11 @@ def load_v3_model():
         prepare_model()
     )
 
+
     print(
         "\nLoading Final V3 model..."
     )
+
 
     processor = (
         LayoutLMv3Processor
@@ -382,6 +446,7 @@ def load_v3_model():
         )
     )
 
+
     model = (
         LayoutLMv3ForTokenClassification
         .from_pretrained(
@@ -390,17 +455,21 @@ def load_v3_model():
         )
     )
 
+
     device = torch.device(
         "cuda:0"
         if torch.cuda.is_available()
         else "cpu"
     )
 
+
     model.to(
         device
     )
 
+
     model.eval()
+
 
     parameter_count = sum(
         parameter.numel()
@@ -408,21 +477,26 @@ def load_v3_model():
         in model.parameters()
     )
 
+
     if (
         model.__class__.__name__
         !=
         "LayoutLMv3ForTokenClassification"
     ):
+
         raise RuntimeError(
             "Wrong model architecture.\n"
-            f"Found: {model.__class__.__name__}"
+            f"Found: "
+            f"{model.__class__.__name__}"
         )
+
 
     if (
         parameter_count
         !=
         EXPECTED_PARAMETER_COUNT
     ):
+
         raise RuntimeError(
             "Wrong model loaded.\n\n"
             f"Expected parameters: "
@@ -431,11 +505,13 @@ def load_v3_model():
             f"{parameter_count:,}"
         )
 
+
     if (
         model.config.num_labels
         !=
         EXPECTED_NUM_LABELS
     ):
+
         raise RuntimeError(
             "Wrong BIO schema.\n\n"
             f"Expected labels: "
@@ -444,11 +520,13 @@ def load_v3_model():
             f"{model.config.num_labels}"
         )
 
+
     id2label = {
         int(key): value
         for key, value
         in model.config.id2label.items()
     }
+
 
     label_list = [
         id2label[index]
@@ -458,15 +536,18 @@ def load_v3_model():
         )
     ]
 
+
     if (
         label_list
         !=
         EXPECTED_LABELS
     ):
+
         raise RuntimeError(
             "Final V3 label order does not "
             "match the expected schema."
         )
+
 
     label2id = {
         label: index
@@ -476,11 +557,14 @@ def load_v3_model():
         )
     }
 
+
     print(
         "✅ Final V3 model loaded"
     )
 
+
     return {
+
         "model":
             model,
 
@@ -509,6 +593,7 @@ def load_v3_model():
 
         "label2id":
             label2id,
+
     }
 
 
@@ -524,24 +609,30 @@ def _sha256(
         hashlib.sha256()
     )
 
+
     with path.open(
         "rb"
-    ) as file:
+    ) as handle:
 
         while True:
 
-            chunk = file.read(
+            chunk = handle.read(
                 1024 * 1024
             )
 
+
             if not chunk:
                 break
+
 
             digest.update(
                 chunk
             )
 
-    return digest.hexdigest()
+
+    return (
+        digest.hexdigest()
+    )
 
 
 def _runtime_signature():
@@ -550,11 +641,14 @@ def _runtime_signature():
         get_runtime_zip()
     )
 
+
     stat = (
         runtime_zip.stat()
     )
 
+
     return {
+
         "filename":
             runtime_zip.name,
 
@@ -565,6 +659,7 @@ def _runtime_signature():
             _sha256(
                 runtime_zip
             ),
+
     }
 
 
@@ -574,7 +669,9 @@ def _read_runtime_signature():
         RUNTIME_SIGNATURE_FILE
         .exists()
     ):
+
         return None
+
 
     try:
 
@@ -595,11 +692,14 @@ def _write_runtime_signature(
 ):
 
     RUNTIME_SIGNATURE_FILE.write_text(
+
         json.dumps(
             signature,
             indent=2,
         ),
+
         encoding="utf-8",
+
     )
 
 
@@ -618,11 +718,13 @@ def find_runtime_loader() -> Path:
             "Runtime cache does not exist."
         )
 
+
     loaders = list(
         RUNTIME_CACHE_ROOT.rglob(
             CANONICAL_RUNTIME_LOADER
         )
     )
+
 
     if len(loaders) != 1:
 
@@ -631,6 +733,7 @@ def find_runtime_loader() -> Path:
             f"{CANONICAL_RUNTIME_LOADER}, "
             f"found {len(loaders)}."
         )
+
 
     return loaders[0]
 
@@ -643,7 +746,9 @@ def prepare_runtime(
         _runtime_signature()
     )
 
+
     cache_valid = False
+
 
     if (
         RUNTIME_CACHE_ROOT.exists()
@@ -657,6 +762,7 @@ def prepare_runtime(
                 find_runtime_loader()
             )
 
+
             cache_valid = (
                 loader.is_file()
                 and
@@ -665,9 +771,11 @@ def prepare_runtime(
                 signature
             )
 
+
         except Exception:
 
             cache_valid = False
+
 
     if not cache_valid:
 
@@ -676,41 +784,47 @@ def prepare_runtime(
             "production runtime..."
         )
 
+
         _extract_fresh(
             get_runtime_zip(),
             RUNTIME_CACHE_ROOT,
         )
 
+
         _write_runtime_signature(
             signature
         )
+
 
         print(
             "✅ Runtime extraction complete"
         )
 
-    return find_runtime_loader()
+
+    return (
+        find_runtime_loader()
+    )
 
 
 # ============================================================
-# GOOGLE COLAB -> STREAMLIT CLOUD COMPATIBILITY
+# EXACT COLAB -> STREAMLIT CLOUD FIX
 # ============================================================
 
 def _patch_colab_runtime_paths():
     """
-    Runtime notebooks originally used Google Colab paths such
-    as /content/....
+    The production runtime contains Google Colab paths.
 
-    Streamlit Community Cloud does not allow the app to create
-    files at filesystem root /content.
+    IMPORTANT:
+    V6.1 loads executable source from the original .ipynb,
+    therefore patching only *.py files is NOT enough.
 
-    All literal /content paths in extracted runtime Python
-    files are redirected into:
+    This patches:
+      *.py
+      *.ipynb
+      *.json
 
-        .invoice_ai_cache/colab_content/
-
-    This keeps the runtime logic intact while using a writable
-    directory on Windows AND Streamlit Cloud.
+    /content/... becomes:
+      .invoice_ai_cache/colab_content/...
     """
 
     COLAB_COMPAT_ROOT.mkdir(
@@ -718,19 +832,41 @@ def _patch_colab_runtime_paths():
         exist_ok=True,
     )
 
+
     replacement = (
         COLAB_COMPAT_ROOT
         .resolve()
         .as_posix()
     )
 
-    patched_count = 0
+
+    patchable_extensions = {
+        ".py",
+        ".ipynb",
+        ".json",
+    }
+
+
+    patched_files = []
+
 
     for runtime_file in (
         RUNTIME_CACHE_ROOT.rglob(
-            "*.py"
+            "*"
         )
     ):
+
+        if not runtime_file.is_file():
+            continue
+
+
+        if (
+            runtime_file.suffix.lower()
+            not in patchable_extensions
+        ):
+
+            continue
+
 
         try:
 
@@ -740,21 +876,52 @@ def _patch_colab_runtime_paths():
                 )
             )
 
-        except UnicodeDecodeError:
+
+        except (
+            UnicodeDecodeError,
+            OSError,
+        ):
 
             continue
 
-        patched = (
-            source
-            .replace(
-                '"/content',
-                f'"{replacement}',
-            )
-            .replace(
-                "'/content",
-                f"'{replacement}",
-            )
+
+        patched = source
+
+
+        # ----------------------------------------------------
+        # Normal Python / JSON strings
+        # ----------------------------------------------------
+
+        patched = patched.replace(
+            '"/content',
+            f'"{replacement}',
         )
+
+
+        patched = patched.replace(
+            "'/content",
+            f"'{replacement}",
+        )
+
+
+        # ----------------------------------------------------
+        # Escaped strings inside .ipynb JSON
+        #
+        # Example:
+        #   Path(\"/content\")
+        # ----------------------------------------------------
+
+        patched = patched.replace(
+            '\\"/content',
+            f'\\"{replacement}',
+        )
+
+
+        patched = patched.replace(
+            "\\'/content",
+            f"\\'{replacement}",
+        )
+
 
         if patched != source:
 
@@ -763,34 +930,55 @@ def _patch_colab_runtime_paths():
                 encoding="utf-8",
             )
 
-            patched_count += 1
+
+            patched_files.append(
+                runtime_file.name
+            )
+
 
     print(
-        "✅ Colab filesystem compatibility ready "
-        f"({patched_count} runtime file(s) patched)"
+        "✅ Colab filesystem compatibility ready"
     )
 
 
+    print(
+        "Patched runtime files:",
+        len(patched_files),
+    )
+
+
+    for filename in patched_files:
+
+        print(
+            " •",
+            filename,
+        )
+
+
 # ============================================================
-# PATH REDIRECTION SAFETY LAYER
+# RUNTIME /CONTENT SAFETY NET
 # ============================================================
 
 def _redirect_colab_path(
     value,
 ) -> Path:
 
-    original = str(
-        value
+    normalized = (
+        str(value)
+        .replace(
+            "\\",
+            "/",
+        )
     )
 
-    normalized = (
-        original
-        .replace("\\", "/")
-    )
 
     if (
-        normalized == "/content"
+        normalized
+        ==
+        "/content"
+
         or
+
         normalized.startswith(
             "/content/"
         )
@@ -803,10 +991,12 @@ def _redirect_colab_path(
             .lstrip("/")
         )
 
+
         return (
             COLAB_COMPAT_ROOT
             / relative
         )
+
 
     return Path(
         value
@@ -820,7 +1010,7 @@ def _redirect_colab_path(
 def _suffix_match_score(
     requested: Path,
     candidate: Path,
-) -> int:
+):
 
     requested_parts = [
         part.lower()
@@ -828,27 +1018,35 @@ def _suffix_match_score(
         in requested.parts
     ]
 
+
     candidate_parts = [
         part.lower()
         for part
         in candidate.parts
     ]
 
+
     score = 0
 
+
     for left, right in zip(
+
         reversed(
             requested_parts
         ),
+
         reversed(
             candidate_parts
         ),
+
     ):
 
         if left != right:
             break
 
+
         score += 1
+
 
     return score
 
@@ -858,22 +1056,27 @@ def _resolve_runtime_source(
     runtime_loader: Path,
 ) -> Path:
 
-    requested = (
+    redirected = (
         _redirect_colab_path(
             source
         )
     )
 
-    if requested.exists():
-        return requested
+
+    if redirected.exists():
+
+        return redirected
+
 
     original = Path(
         source
     )
 
+
     if not original.is_absolute():
 
         possibilities = [
+
             runtime_loader.parent
             / original,
 
@@ -885,21 +1088,30 @@ def _resolve_runtime_source(
 
             COLAB_COMPAT_ROOT
             / original,
+
         ]
+
 
         for candidate in possibilities:
 
             if candidate.exists():
+
                 return candidate
 
+
     matches = [
+
         candidate
+
         for candidate
         in RUNTIME_CACHE_ROOT.rglob(
             original.name
         )
+
         if candidate.is_file()
+
     ]
+
 
     if not matches:
 
@@ -911,20 +1123,26 @@ def _resolve_runtime_source(
             f"{RUNTIME_CACHE_ROOT}"
         )
 
+
     matches.sort(
         key=lambda candidate: (
+
             -_suffix_match_score(
                 original,
                 candidate,
             ),
+
             len(
                 candidate.parts
             ),
+
             str(
                 candidate
             ).lower(),
+
         )
     )
+
 
     if len(matches) > 1:
 
@@ -935,6 +1153,7 @@ def _resolve_runtime_source(
             )
         )
 
+
         second_score = (
             _suffix_match_score(
                 original,
@@ -942,11 +1161,13 @@ def _resolve_runtime_source(
             )
         )
 
+
         if (
             first_score
             ==
             second_score
         ):
+
             raise RuntimeError(
                 "Ambiguous runtime source path.\n\n"
                 f"Requested:\n{source}\n\n"
@@ -958,6 +1179,7 @@ def _resolve_runtime_source(
                     in matches
                 )
             )
+
 
     return matches[0]
 
@@ -985,11 +1207,13 @@ def _build_safe_copy2(
             )
         )
 
+
         destination_path = (
             _redirect_colab_path(
                 destination
             )
         )
+
 
         if (
             destination_path.exists()
@@ -1009,14 +1233,18 @@ def _build_safe_copy2(
                 exist_ok=True,
             )
 
+
         try:
 
             final_destination = (
                 destination_path
                 / source_path.name
+
                 if destination_path.is_dir()
+
                 else destination_path
             )
+
 
             if (
                 final_destination.exists()
@@ -1030,9 +1258,11 @@ def _build_safe_copy2(
                     final_destination
                 )
 
+
         except Exception:
 
             pass
+
 
         return original_copy2(
             str(source_path),
@@ -1040,6 +1270,7 @@ def _build_safe_copy2(
             follow_symlinks=
                 follow_symlinks,
         )
+
 
     return safe_copy2
 
@@ -1063,11 +1294,13 @@ def _build_safe_copy(
             )
         )
 
+
         destination_path = (
             _redirect_colab_path(
                 destination
             )
         )
+
 
         if (
             destination_path.exists()
@@ -1087,12 +1320,14 @@ def _build_safe_copy(
                 exist_ok=True,
             )
 
+
         return original_copy(
             str(source_path),
             str(destination_path),
             follow_symlinks=
                 follow_symlinks,
         )
+
 
     return safe_copy
 
@@ -1116,16 +1351,19 @@ def _build_safe_copyfile(
             )
         )
 
+
         destination_path = (
             _redirect_colab_path(
                 destination
             )
         )
 
+
         destination_path.parent.mkdir(
             parents=True,
             exist_ok=True,
         )
+
 
         return original_copyfile(
             str(source_path),
@@ -1133,6 +1371,7 @@ def _build_safe_copyfile(
             follow_symlinks=
                 follow_symlinks,
         )
+
 
     return safe_copyfile
 
@@ -1146,17 +1385,18 @@ def load_v3_production_engine(
     force_runtime_refresh=False,
 ):
 
-    # --------------------------------------------------------
-    # MODEL
-    # --------------------------------------------------------
+    # ========================================================
+    # LOAD VERIFIED MODEL
+    # ========================================================
 
     engine = (
         load_v3_model()
     )
 
-    # --------------------------------------------------------
-    # RUNTIME PACKAGE
-    # --------------------------------------------------------
+
+    # ========================================================
+    # EXTRACT / VERIFY RUNTIME
+    # ========================================================
 
     runtime_loader = (
         prepare_runtime(
@@ -1165,25 +1405,31 @@ def load_v3_production_engine(
         )
     )
 
-    # --------------------------------------------------------
-    # STREAMLIT CLOUD / COLAB PATH FIX
-    # --------------------------------------------------------
+
+    # ========================================================
+    # CRITICAL:
+    # PATCH .PY + .IPYNB + .JSON BEFORE EXECUTION
+    # ========================================================
 
     _patch_colab_runtime_paths()
+
 
     print(
         "\nRuntime loader:"
     )
 
+
     print(
         runtime_loader
     )
 
-    # --------------------------------------------------------
-    # VARIABLES EXPECTED BY THE PRODUCTION RUNTIME
-    # --------------------------------------------------------
+
+    # ========================================================
+    # VARIABLES EXPECTED BY PRODUCTION RUNTIME
+    # ========================================================
 
     runtime_namespace = {
+
         "__name__":
             "invoice_ai_v3_production_runtime",
 
@@ -1194,6 +1440,7 @@ def load_v3_production_engine(
 
         "__builtins__":
             __builtins__,
+
 
         "model":
             engine["model"],
@@ -1209,6 +1456,7 @@ def load_v3_production_engine(
 
         "label2id":
             engine["label2id"],
+
 
         "MODEL":
             engine["model"],
@@ -1239,7 +1487,9 @@ def load_v3_production_engine(
             engine[
                 "parameter_count"
             ],
+
     }
+
 
     runtime_source = (
         runtime_loader.read_text(
@@ -1247,15 +1497,18 @@ def load_v3_production_engine(
         )
     )
 
-    # --------------------------------------------------------
-    # ALLOW IMPORTING RUNTIME SIBLING FILES
-    # --------------------------------------------------------
+
+    # ========================================================
+    # ALLOW RUNTIME SIBLING IMPORTS
+    # ========================================================
 
     runtime_directory = str(
         runtime_loader.parent
     )
 
+
     inserted_runtime_path = False
+
 
     if (
         runtime_directory
@@ -1267,23 +1520,28 @@ def load_v3_production_engine(
             runtime_directory,
         )
 
+
         inserted_runtime_path = True
 
-    # --------------------------------------------------------
-    # TEMPORARILY HARDEN SHUTIL
-    # --------------------------------------------------------
+
+    # ========================================================
+    # TEMPORARY SHUTIL COMPATIBILITY
+    # ========================================================
 
     original_copy2 = (
         shutil.copy2
     )
 
+
     original_copy = (
         shutil.copy
     )
 
+
     original_copyfile = (
         shutil.copyfile
     )
+
 
     shutil.copy2 = (
         _build_safe_copy2(
@@ -1292,12 +1550,14 @@ def load_v3_production_engine(
         )
     )
 
+
     shutil.copy = (
         _build_safe_copy(
             runtime_loader,
             original_copy,
         )
     )
+
 
     shutil.copyfile = (
         _build_safe_copyfile(
@@ -1306,9 +1566,11 @@ def load_v3_production_engine(
         )
     )
 
+
     print(
         "\nLoading production runtime..."
     )
+
 
     try:
 
@@ -1324,19 +1586,23 @@ def load_v3_production_engine(
             runtime_namespace,
         )
 
+
     finally:
 
         shutil.copy2 = (
             original_copy2
         )
 
+
         shutil.copy = (
             original_copy
         )
 
+
         shutil.copyfile = (
             original_copyfile
         )
+
 
         if inserted_runtime_path:
 
@@ -1346,19 +1612,22 @@ def load_v3_production_engine(
                     runtime_directory
                 )
 
+
             except ValueError:
 
                 pass
 
-    # --------------------------------------------------------
+
+    # ========================================================
     # FINAL CONTRACT
-    # --------------------------------------------------------
+    # ========================================================
 
     process_invoice_final = (
         runtime_namespace.get(
             "process_invoice_final"
         )
     )
+
 
     if not callable(
         process_invoice_final
@@ -1370,32 +1639,41 @@ def load_v3_production_engine(
             "was not created."
         )
 
+
     print(
         "✅ Production runtime loaded"
     )
 
+
     return {
+
         **engine,
+
 
         "runtime_loader":
             runtime_loader,
 
+
         "runtime_namespace":
             runtime_namespace,
+
 
         "process_invoice_final":
             process_invoice_final,
 
+
         "runtime_ready":
             True,
 
+
         "colab_compat_root":
             COLAB_COMPAT_ROOT,
+
     }
 
 
 # ============================================================
-# VERIFICATION
+# VERIFY MODEL
 # ============================================================
 
 def verify_model():
@@ -1404,21 +1682,26 @@ def verify_model():
         "=" * 72
     )
 
+
     print(
         "INVOICE AI V3 — MODEL VERIFICATION"
     )
+
 
     print(
         "=" * 72
     )
 
+
     engine = (
         load_v3_model()
     )
 
+
     print(
         "\n✅ FINAL V3 MODEL READY"
     )
+
 
     print(
         "Architecture :",
@@ -1427,10 +1710,12 @@ def verify_model():
         ].__class__.__name__,
     )
 
+
     print(
         "Parameters   :",
         f"{engine['parameter_count']:,}",
     )
+
 
     print(
         "Fields       :",
@@ -1439,6 +1724,7 @@ def verify_model():
         ),
     )
 
+
     print(
         "BIO Labels   :",
         len(
@@ -1446,29 +1732,38 @@ def verify_model():
         ),
     )
 
+
     print(
         "Device       :",
         engine["device"],
     )
+
 
     print(
         "Model path   :",
         engine["model_dir"],
     )
 
+
     print(
         "\n"
         + "=" * 72
     )
 
+
     print(
         "🔥 FINAL V3 MODEL VERIFIED"
     )
+
 
     print(
         "=" * 72
     )
 
+
+# ============================================================
+# VERIFY COMPLETE PRODUCTION ENGINE
+# ============================================================
 
 def verify_production(
     rebuild_runtime=False,
@@ -1478,14 +1773,17 @@ def verify_production(
         "=" * 72
     )
 
+
     print(
         "INVOICE AI V3 — "
         "COMPLETE PRODUCTION VERIFICATION"
     )
 
+
     print(
         "=" * 72
     )
+
 
     engine = (
         load_v3_production_engine(
@@ -1494,9 +1792,11 @@ def verify_production(
         )
     )
 
+
     print(
         "\n✅ FINAL V3 MODEL"
     )
+
 
     print(
         "Architecture :",
@@ -1505,10 +1805,12 @@ def verify_production(
         ].__class__.__name__,
     )
 
+
     print(
         "Parameters   :",
         f"{engine['parameter_count']:,}",
     )
+
 
     print(
         "Fields       :",
@@ -1517,6 +1819,7 @@ def verify_production(
         ),
     )
 
+
     print(
         "BIO Labels   :",
         len(
@@ -1524,14 +1827,17 @@ def verify_production(
         ),
     )
 
+
     print(
         "Device       :",
         engine["device"],
     )
 
+
     print(
         "\n✅ PRODUCTION RUNTIME"
     )
+
 
     print(
         "Loader       :",
@@ -1540,6 +1846,7 @@ def verify_production(
         ],
     )
 
+
     print(
         "Writable root:",
         engine[
@@ -1547,9 +1854,11 @@ def verify_production(
         ],
     )
 
+
     print(
         "\n✅ FINAL INFERENCE FUNCTION"
     )
+
 
     print(
         "process_invoice_final callable :",
@@ -1560,15 +1869,18 @@ def verify_production(
         ),
     )
 
+
     print(
         "\n"
         + "=" * 72
     )
 
+
     print(
         "🔥 INVOICE AI V3 COMPLETE "
         "PRODUCTION ENGINE VERIFIED"
     )
+
 
     print(
         "=" * 72
@@ -1576,35 +1888,42 @@ def verify_production(
 
 
 # ============================================================
-# CLI
+# COMMAND LINE
 # ============================================================
 
 def main():
 
-    parser = argparse.ArgumentParser(
-        description=(
-            "Invoice AI V3 "
-            "Production Engine"
+    parser = (
+        argparse.ArgumentParser(
+            description=(
+                "Invoice AI V3 "
+                "Production Engine"
+            )
         )
     )
+
 
     parser.add_argument(
         "--model-only",
         action="store_true",
     )
 
+
     parser.add_argument(
         "--rebuild-runtime",
         action="store_true",
     )
 
+
     args = (
         parser.parse_args()
     )
 
+
     if args.model_only:
 
         verify_model()
+
 
     else:
 
