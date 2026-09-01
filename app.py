@@ -8,20 +8,16 @@ from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
 
+
+# ============================================================
+# PADDLE / PADDLEX CLOUD STARTUP
+# ============================================================
+
+os.environ["PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK"] = "True"
+os.environ["PADDLE_PDX_EAGER_INIT"] = "False"
+
+
 import streamlit as st
-
-
-# ============================================================
-# PADDLE / PADDLEX STARTUP
-# ============================================================
-
-# Avoid the unnecessary Paddle model-source connectivity check
-# during every fresh application launch.
-os.environ.setdefault(
-    "PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK",
-    "True",
-)
-
 
 from invoice_engine import load_v3_production_engine
 
