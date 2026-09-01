@@ -1,4 +1,6 @@
-import base64
+from __future__ import annotations
+
+import html
 import json
 import math
 import os
@@ -7,19 +9,32 @@ import tempfile
 from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
+from typing import Any
 
 
 # ============================================================
 # PADDLE / PADDLEX CLOUD STARTUP
+# MUST BE SET BEFORE invoice_engine IMPORT
 # ============================================================
 
 os.environ["PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK"] = "True"
 os.environ["PADDLE_PDX_EAGER_INIT"] = "False"
 
 
+# ============================================================
+# IMPORTS
+# ============================================================
+
+import fitz
+import pandas as pd
 import streamlit as st
 
-from invoice_engine import load_v3_production_engine
+from PIL import Image
+
+from invoice_engine import (
+    EXPECTED_FIELDS,
+    load_v3_production_engine,
+)
 
 
 # ============================================================
@@ -35,59 +50,364 @@ st.set_page_config(
 
 
 # ============================================================
+# HTML HELPER
+# IMPORTANT:
+# Use st.html(), NOT st.markdown(), for custom HTML.
+# ============================================================
+
+def render_html(markup: str) -> None:
+    st.html(
+        markup.strip()
+    )
+
+
+# ============================================================
+# PROFESSIONAL CSS
+# ============================================================
+
+st.html(
+    """
+    <style>
+
+    .stApp {
+        background:
+            radial-gradient(
+                circle at top right,
+                rgba(220, 38, 38, 0.06),
+                transparent 34rem
+            ),
+            #f7f8fb;
+    }
+
+    .block-container {
+        max-width: 1450px;
+        padding-top: 1.4rem;
+        padding-bottom: 3rem;
+    }
+
+    .hero {
+        background:
+            linear-gradient(
+                135deg,
+                #111827 0%,
+                #1f2937 64%,
+                #6b1f2a 130%
+            );
+
+        color: white;
+
+        border-radius: 22px;
+
+        padding:
+            1.65rem
+            1.8rem;
+
+        margin-bottom:
+            1.35rem;
+
+        box-shadow:
+            0 12px 35px
+            rgba(17, 24, 39, 0.12);
+    }
+
+    .hero-kicker {
+        color: #fca5a5;
+
+        font-size: 0.76rem;
+
+        font-weight: 800;
+
+        text-transform: uppercase;
+
+        letter-spacing: 0.14em;
+
+        margin-bottom: 0.45rem;
+    }
+
+    .hero-title {
+        color: white;
+
+        font-size: 2.15rem;
+
+        font-weight: 800;
+
+        line-height: 1.15;
+
+        margin: 0;
+    }
+
+    .hero-sub {
+        color: #d1d5db;
+
+        font-size: 0.98rem;
+
+        max-width: 880px;
+
+        margin-top: 0.7rem;
+
+        line-height: 1.58;
+    }
+
+    .status-pill {
+        display: inline-flex;
+
+        align-items: center;
+
+        gap: 0.4rem;
+
+        margin-top: 0.95rem;
+
+        padding:
+            0.38rem
+            0.78rem;
+
+        border-radius: 999px;
+
+        border:
+            1px solid
+            rgba(255, 255, 255, 0.18);
+
+        background:
+            rgba(255, 255, 255, 0.08);
+
+        font-size: 0.82rem;
+
+        color: #f3f4f6;
+    }
+
+    .status-dot {
+        width: 8px;
+
+        height: 8px;
+
+        border-radius: 50%;
+
+        background: #34d399;
+
+        box-shadow:
+            0 0 0 3px
+            rgba(52, 211, 153, 0.15);
+
+        display: inline-block;
+    }
+
+    .section-card {
+        background:
+            rgba(255,255,255,0.97);
+
+        border:
+            1px solid #e5e7eb;
+
+        border-radius: 17px;
+
+        padding:
+            1.05rem
+            1.1rem;
+
+        box-shadow:
+            0 5px 18px
+            rgba(17, 24, 39, 0.035);
+
+        margin-bottom:
+            0.9rem;
+    }
+
+    .mini-label {
+        color: #6b7280;
+
+        font-size: 0.72rem;
+
+        text-transform: uppercase;
+
+        letter-spacing: 0.08em;
+
+        font-weight: 800;
+    }
+
+    .mini-value {
+        color: #111827;
+
+        font-size: 1.06rem;
+
+        font-weight: 700;
+
+        margin-top: 0.28rem;
+
+        word-break: break-word;
+    }
+
+    .not-detected {
+        color: #9ca3af;
+
+        font-style: italic;
+
+        font-weight: 500;
+    }
+
+    .ready-card {
+        background: #ffffff;
+
+        border:
+            1px solid #e5e7eb;
+
+        border-radius: 16px;
+
+        padding:
+            1.1rem
+            1.2rem;
+
+        box-shadow:
+            0 5px 18px
+            rgba(17,24,39,0.035);
+    }
+
+    .ready-title {
+        color: #047857;
+
+        font-size: 0.75rem;
+
+        font-weight: 800;
+
+        letter-spacing: 0.09em;
+
+        text-transform: uppercase;
+    }
+
+    .ready-text {
+        color: #374151;
+
+        font-size: 0.98rem;
+
+        margin-top: 0.3rem;
+    }
+
+    .preview-page {
+        color: #6b7280;
+
+        font-size: 0.8rem;
+
+        font-weight: 700;
+
+        margin:
+            0.2rem
+            0
+            0.5rem
+            0;
+    }
+
+    div[data-testid="stMetric"] {
+        background:
+            rgba(255,255,255,0.97);
+
+        border:
+            1px solid #e5e7eb;
+
+        border-radius: 15px;
+
+        padding:
+            0.85rem
+            0.95rem;
+
+        box-shadow:
+            0 5px 18px
+            rgba(17,24,39,0.035);
+    }
+
+    div[data-testid="stFileUploader"] {
+        background: #ffffff;
+
+        border:
+            1px solid #e5e7eb;
+
+        border-radius: 17px;
+
+        padding:
+            0.35rem
+            0.8rem
+            0.8rem
+            0.8rem;
+    }
+
+    div[data-testid="stDataFrame"] {
+        border:
+            1px solid #e5e7eb;
+
+        border-radius: 14px;
+
+        overflow: hidden;
+    }
+
+    div.stButton > button,
+    div.stDownloadButton > button {
+        border-radius: 11px;
+
+        font-weight: 700;
+
+        min-height: 44px;
+    }
+
+    [data-testid="stSidebar"] {
+        border-right:
+            1px solid #e5e7eb;
+    }
+
+    footer {
+        visibility: hidden;
+    }
+
+    </style>
+    """
+)
+
+
+# ============================================================
 # CONSTANTS
 # ============================================================
 
-SUPPORTED_TYPES = [
-    "pdf",
-    "png",
-    "jpg",
-    "jpeg",
-    "webp",
-    "bmp",
-    "tiff",
-    "tif",
-]
-
-
-IMAGE_TYPES = {
-    ".png",
-    ".jpg",
-    ".jpeg",
-    ".webp",
-    ".bmp",
-    ".tiff",
-    ".tif",
+FIELD_LABELS = {
+    "VENDOR_NAME": "Vendor Name",
+    "INVOICE_NUMBER": "Invoice Number",
+    "INVOICE_DATE": "Invoice Date",
+    "DUE_DATE": "Due Date",
+    "CUSTOMER_NAME": "Customer Name",
+    "ADDRESS": "Address",
+    "CURRENCY": "Currency",
+    "LINE_ITEM_DESC": "Line Item Description",
+    "LINE_ITEM_QTY": "Line Item Quantity",
+    "LINE_ITEM_UNIT_PRICE": "Line Item Unit Price",
+    "LINE_ITEM_AMOUNT": "Line Item Amount",
+    "TAX": "Tax",
+    "DISCOUNT": "Discount",
+    "SUBTOTAL": "Subtotal",
+    "TOTAL_AMOUNT": "Total Amount",
+    "PAYMENT_TERMS": "Payment Terms",
 }
 
 
-EXPECTED_FIELD_ORDER = [
-    "VENDOR_NAME",
-    "INVOICE_NUMBER",
-    "INVOICE_DATE",
-    "DUE_DATE",
-    "CUSTOMER_NAME",
-    "ADDRESS",
-    "CURRENCY",
-    "LINE_ITEM_DESC",
-    "LINE_ITEM_QTY",
-    "LINE_ITEM_UNIT_PRICE",
-    "LINE_ITEM_AMOUNT",
-    "TAX",
-    "DISCOUNT",
-    "SUBTOTAL",
-    "TOTAL_AMOUNT",
-    "PAYMENT_TERMS",
-]
-
-
-# ============================================================
-# ENGINE CACHE
-# ============================================================
-
-@st.cache_resource(
-    show_spinner=False
+TABLE_KEYS = (
+    "line_items",
+    "line_item_table",
+    "line_items_table",
+    "material_table",
+    "materials",
+    "items",
 )
+
+
+VALUE_KEYS = (
+    "value",
+    "text",
+    "prediction",
+    "normalized_value",
+    "final_value",
+)
+
+
+# ============================================================
+# ENGINE
+# ============================================================
+
+@st.cache_resource(show_spinner=False)
 def get_engine():
 
     return (
@@ -95,25 +415,36 @@ def get_engine():
     )
 
 
+def initialize_engine():
+
+    try:
+
+        with st.spinner(
+            "Initializing Invoice AI production engine..."
+        ):
+
+            return get_engine()
+
+    except Exception as error:
+
+        st.error(
+            "❌ Production engine initialization failed"
+        )
+
+        st.exception(
+            error
+        )
+
+        st.stop()
+
+
 # ============================================================
-# JSON-SAFE CONVERSION
+# JSON SAFE CONVERSION
 # ============================================================
 
-def to_json_safe(
-    value,
-):
-    """
-    Convert runtime output into JSON-safe Python objects.
-
-    Handles:
-    - Path
-    - Decimal
-    - datetime/date
-    - NumPy scalars/arrays
-    - Torch scalars/tensors
-    - tuples/sets
-    - nested dictionaries/lists
-    """
+def make_json_safe(
+    value: Any,
+) -> Any:
 
     if value is None:
         return None
@@ -121,38 +452,20 @@ def to_json_safe(
 
     if isinstance(
         value,
-        (
-            str,
-            int,
-            bool,
-        ),
+        Path,
     ):
-
-        return value
-
-
-    if isinstance(
-        value,
-        float,
-    ):
-
-        if (
-            math.isnan(value)
-            or
-            math.isinf(value)
-        ):
-
-            return str(value)
-
-        return value
+        return str(
+            value
+        )
 
 
     if isinstance(
         value,
         Decimal,
     ):
-
-        return float(value)
+        return float(
+            value
+        )
 
 
     if isinstance(
@@ -162,16 +475,17 @@ def to_json_safe(
             date,
         ),
     ):
-
         return value.isoformat()
 
 
     if isinstance(
         value,
-        Path,
+        bytes,
     ):
-
-        return str(value)
+        return value.decode(
+            "utf-8",
+            errors="replace",
+        )
 
 
     if isinstance(
@@ -180,13 +494,13 @@ def to_json_safe(
     ):
 
         return {
-
             str(key):
-                to_json_safe(item)
+                make_json_safe(
+                    item
+                )
 
             for key, item
             in value.items()
-
         }
 
 
@@ -200,16 +514,15 @@ def to_json_safe(
     ):
 
         return [
-
-            to_json_safe(item)
+            make_json_safe(
+                item
+            )
 
             for item
             in value
-
         ]
 
 
-    # NumPy / Torch scalar.
     if hasattr(
         value,
         "item",
@@ -217,10 +530,8 @@ def to_json_safe(
 
         try:
 
-            return (
-                to_json_safe(
-                    value.item()
-                )
+            return make_json_safe(
+                value.item()
             )
 
         except Exception:
@@ -228,7 +539,6 @@ def to_json_safe(
             pass
 
 
-    # NumPy / Torch array/tensor.
     if hasattr(
         value,
         "tolist",
@@ -236,10 +546,8 @@ def to_json_safe(
 
         try:
 
-            return (
-                to_json_safe(
-                    value.tolist()
-                )
+            return make_json_safe(
+                value.tolist()
             )
 
         except Exception:
@@ -247,246 +555,103 @@ def to_json_safe(
             pass
 
 
-    return str(value)
-
-
-def create_json_bytes(
-    data,
-):
-
-    safe_data = (
-        to_json_safe(
-            data
+    if (
+        isinstance(
+            value,
+            float,
         )
-    )
-
-
-    return json.dumps(
-        safe_data,
-        indent=2,
-        ensure_ascii=False,
-    ).encode(
-        "utf-8"
-    )
-
-
-# ============================================================
-# RESULT FIELD DISCOVERY
-# ============================================================
-
-def find_best_field_dict(
-    result,
-):
-    """
-    Finds the dictionary containing the 16 invoice fields.
-
-    This deliberately supports multiple output shapes so the
-    Streamlit UI does not become tightly coupled to one runtime
-    wrapper format.
-    """
-
-    if not isinstance(
-        result,
-        dict,
+        and
+        not math.isfinite(
+            value
+        )
     ):
 
         return None
 
 
-    expected = set(
-        EXPECTED_FIELD_ORDER
+    if isinstance(
+        value,
+        (
+            str,
+            int,
+            float,
+            bool,
+        ),
+    ):
+
+        return value
+
+
+    return str(
+        value
     )
 
 
-    # --------------------------------------------------------
-    # CASE 1
-    # Fields are directly at root.
-    # --------------------------------------------------------
+# ============================================================
+# FIELD NORMALIZATION
+# ============================================================
 
-    root_keys = {
+def unwrap_field_value(
+    value: Any,
+) -> Any:
 
-        str(key).upper()
-
-        for key
-        in result.keys()
-
-    }
-
-
-    direct_matches = (
-
-        expected
-        &
-        root_keys
-
-    )
-
-
-    if len(
-        direct_matches
-    ) >= 3:
-
-        return result
-
-
-    # --------------------------------------------------------
-    # CASE 2
-    # Common nested names.
-    # --------------------------------------------------------
-
-    preferred_keys = [
-
-        "fields",
-        "extracted_fields",
-        "invoice_fields",
-        "header_fields",
-        "final_fields",
-        "result",
-        "data",
-        "invoice",
-
-    ]
-
-
-    lower_lookup = {
-
-        str(key).lower():
-            key
-
-        for key
-        in result.keys()
-
-    }
-
-
-    for preferred_key in (
-        preferred_keys
-    ):
-
-        actual_key = (
-            lower_lookup.get(
-                preferred_key
-            )
-        )
-
-
-        if actual_key is None:
-            continue
-
-
-        candidate = (
-            result.get(
-                actual_key
-            )
-        )
-
-
-        if not isinstance(
-            candidate,
-            dict,
-        ):
-
-            continue
-
-
-        candidate_keys = {
-
-            str(key).upper()
-
-            for key
-            in candidate.keys()
-
-        }
-
-
-        if (
-            expected
-            &
-            candidate_keys
-        ):
-
-            return candidate
-
-
-    # --------------------------------------------------------
-    # CASE 3
-    # Search one level deep.
-    # --------------------------------------------------------
-
-    for candidate in (
-        result.values()
-    ):
-
-        if not isinstance(
-            candidate,
-            dict,
-        ):
-
-            continue
-
-
-        candidate_keys = {
-
-            str(key).upper()
-
-            for key
-            in candidate.keys()
-
-        }
-
-
-        if (
-            expected
-            &
-            candidate_keys
-        ):
-
-            return candidate
-
-
-    return None
-
-
-def normalize_field_lookup(
-    field_dictionary,
-):
-
-    if not isinstance(
-        field_dictionary,
+    if isinstance(
+        value,
         dict,
     ):
 
-        return {}
+        for key in VALUE_KEYS:
+
+            if key in value:
+
+                return unwrap_field_value(
+                    value[key]
+                )
 
 
-    return {
-
-        str(key).upper():
+        if len(
             value
+        ) == 1:
 
-        for key, value
-        in field_dictionary.items()
+            return unwrap_field_value(
+                next(
+                    iter(
+                        value.values()
+                    )
+                )
+            )
 
-    }
 
-
-def display_value(
-    value,
-):
-
-    if value is None:
-
-        return "NOT_DETECTED"
+        return value
 
 
     if isinstance(
         value,
-        str,
+        list,
     ):
 
-        cleaned = (
-            value.strip()
-        )
+        cleaned = [
+            unwrap_field_value(
+                item
+            )
+
+            for item
+            in value
+
+            if item is not None
+        ]
+
+
+        cleaned = [
+            item
+
+            for item
+            in cleaned
+
+            if str(
+                item
+            ).strip()
+        ]
 
 
         if not cleaned:
@@ -496,152 +661,212 @@ def display_value(
             )
 
 
-        return cleaned
-
-
-    if isinstance(
-        value,
-        (
-            list,
-            tuple,
-        ),
-    ):
-
-        if not value:
+        if len(
+            cleaned
+        ) == 1:
 
             return (
-                "NOT_DETECTED"
+                cleaned[0]
             )
 
 
-        return ", ".join(
-            str(item)
-            for item
-            in value
+        return (
+            " | ".join(
+                str(
+                    item
+                )
+
+                for item
+                in cleaned
+            )
         )
 
 
-    return str(value)
+    if value is None:
+
+        return (
+            "NOT_DETECTED"
+        )
 
 
-# ============================================================
-# LINE ITEM DISCOVERY
-# ============================================================
-
-def find_tabular_data(
-    result,
-):
-
-    if not isinstance(
-        result,
-        dict,
+    if (
+        isinstance(
+            value,
+            str,
+        )
+        and
+        not value.strip()
     ):
 
         return (
-            None,
-            None,
+            "NOT_DETECTED"
         )
 
 
-    possible_names = [
-
-        "line_items",
-        "items",
-        "material_table",
-        "materials",
-        "table",
-        "tables",
-        "line_item_table",
-        "invoice_lines",
-
-    ]
+    return value
 
 
-    lower_lookup = {
+# ============================================================
+# FIND FIELD DICTIONARY
+# ============================================================
 
-        str(key).lower():
-            key
+def field_dict_score(
+    candidate: dict,
+) -> int:
 
-        for key
-        in result.keys()
+    return sum(
+        1
+
+        for field
+        in EXPECTED_FIELDS
+
+        if field
+        in candidate
+    )
+
+
+def find_best_field_dict(
+    payload: Any,
+) -> dict:
+
+    best = {}
+
+    best_score = 0
+
+
+    def walk(
+        node: Any,
+    ):
+
+        nonlocal best, best_score
+
+
+        if isinstance(
+            node,
+            dict,
+        ):
+
+            score = (
+                field_dict_score(
+                    node
+                )
+            )
+
+
+            if score > best_score:
+
+                best = node
+
+                best_score = score
+
+
+            for value in (
+                node.values()
+            ):
+
+                walk(
+                    value
+                )
+
+
+        elif isinstance(
+            node,
+            list,
+        ):
+
+            for value in node:
+
+                walk(
+                    value
+                )
+
+
+    walk(
+        payload
+    )
+
+
+    return best
+
+
+# ============================================================
+# NORMALIZE 16 FIELDS
+# ============================================================
+
+def normalized_fields(
+    payload: Any,
+) -> dict:
+
+    source = (
+        find_best_field_dict(
+            payload
+        )
+    )
+
+
+    return {
+
+        field:
+            unwrap_field_value(
+                source.get(
+                    field,
+                    "NOT_DETECTED",
+                )
+            )
+
+        for field
+        in EXPECTED_FIELDS
 
     }
 
 
-    for possible_name in (
-        possible_names
+# ============================================================
+# FIND LINE ITEM TABLE
+# ============================================================
+
+def find_table(
+    payload: Any,
+):
+
+    found = None
+
+
+    def walk(
+        node: Any,
     ):
 
-        real_key = (
-            lower_lookup.get(
-                possible_name
-            )
-        )
+        nonlocal found
 
 
-        if real_key is None:
-            continue
+        if found is not None:
 
+            return
 
-        candidate = (
-            result.get(
-                real_key
-            )
-        )
-
-
-        # ----------------------------------------------------
-        # Direct list of rows.
-        # ----------------------------------------------------
 
         if isinstance(
-            candidate,
-            list,
-        ):
-
-            if (
-                candidate
-                and
-                all(
-                    isinstance(
-                        row,
-                        dict,
-                    )
-                    for row
-                    in candidate
-                )
-            ):
-
-                return (
-                    str(real_key),
-                    candidate,
-                )
-
-
-        # ----------------------------------------------------
-        # One additional nesting level.
-        # ----------------------------------------------------
-
-        if isinstance(
-            candidate,
+            node,
             dict,
         ):
 
-            for (
-                nested_key,
-                nested_value,
-            ) in candidate.items():
+            for key in TABLE_KEYS:
+
+                if key not in node:
+
+                    continue
+
+
+                candidate = (
+                    node[key]
+                )
+
 
                 if (
-
                     isinstance(
-                        nested_value,
+                        candidate,
                         list,
                     )
-
                     and
-                    nested_value
-
+                    candidate
                     and
                     all(
                         isinstance(
@@ -649,121 +874,323 @@ def find_tabular_data(
                             dict,
                         )
                         for row
-                        in nested_value
+                        in candidate
                     )
-
                 ):
 
-                    return (
-
-                        (
-                            f"{real_key}."
-                            f"{nested_key}"
-                        ),
-
-                        nested_value,
-
+                    found = (
+                        candidate
                     )
 
+                    return
 
-    return (
-        None,
-        None,
+
+                if (
+                    isinstance(
+                        candidate,
+                        dict,
+                    )
+                    and
+                    candidate
+                ):
+
+                    found = (
+                        candidate
+                    )
+
+                    return
+
+
+            for value in (
+                node.values()
+            ):
+
+                walk(
+                    value
+                )
+
+
+        elif isinstance(
+            node,
+            list,
+        ):
+
+            if (
+                node
+                and
+                all(
+                    isinstance(
+                        row,
+                        dict,
+                    )
+                    for row
+                    in node
+                )
+            ):
+
+                keys = {
+
+                    str(
+                        key
+                    ).lower()
+
+                    for row
+                    in node
+
+                    for key
+                    in row.keys()
+
+                }
+
+
+                signals = (
+                    "description",
+                    "desc",
+                    "qty",
+                    "quantity",
+                    "rate",
+                    "price",
+                    "amount",
+                    "material",
+                    "item",
+                )
+
+
+                if any(
+                    token in key
+
+                    for key
+                    in keys
+
+                    for token
+                    in signals
+                ):
+
+                    found = (
+                        node
+                    )
+
+                    return
+
+
+            for value in node:
+
+                walk(
+                    value
+                )
+
+
+    walk(
+        payload
     )
+
+
+    return found
 
 
 # ============================================================
-# PDF / IMAGE PREVIEW
+# DISPLAY VALUE
 # ============================================================
 
-def render_pdf_preview(
-    file_bytes,
-):
+def display_value(
+    value: Any,
+) -> str:
 
-    encoded_pdf = (
+    if value is None:
 
-        base64.b64encode(
-            file_bytes
-        )
-        .decode(
-            "utf-8"
+        return (
+            "NOT_DETECTED"
         )
 
+
+    if isinstance(
+        value,
+        (
+            dict,
+            list,
+        ),
+    ):
+
+        return (
+            json.dumps(
+                make_json_safe(
+                    value
+                ),
+                ensure_ascii=False,
+            )
+        )
+
+
+    text = (
+        str(
+            value
+        )
+        .strip()
     )
 
 
-    pdf_html = f"""
+    if (
+        not text
+        or
+        text.lower()
+        in {
+            "none",
+            "null",
+            "nan",
+        }
+    ):
 
-        <iframe
-            src="data:application/pdf;base64,{encoded_pdf}"
-            width="100%"
-            height="700"
-            type="application/pdf"
-            style="
-                border: 1px solid #dddddd;
-                border-radius: 8px;
-            "
-        >
-        </iframe>
-
-    """
-
-
-    st.markdown(
-        pdf_html,
-        unsafe_allow_html=True,
-    )
+        return (
+            "NOT_DETECTED"
+        )
 
 
-def render_file_preview(
+    return text
+
+
+# ============================================================
+# PDF PREVIEW
+# ============================================================
+
+def preview_pdf(
     uploaded_file,
 ):
 
-    extension = (
-
-        Path(
-            uploaded_file.name
+    document = (
+        fitz.open(
+            stream=
+                uploaded_file.getvalue(),
+            filetype="pdf",
         )
-        .suffix
-        .lower()
-
     )
 
 
-    file_bytes = (
-        uploaded_file.getvalue()
-    )
+    try:
+
+        if (
+            document.page_count
+            ==
+            0
+        ):
+
+            st.warning(
+                "PDF contains no pages."
+            )
+
+            return
 
 
-    if extension == ".pdf":
-
-        render_pdf_preview(
-            file_bytes
+        st.caption(
+            f"{document.page_count} page"
+            f"{'s' if document.page_count != 1 else ''}"
+            " • rendered directly in the app"
         )
 
 
-    elif extension in (
-        IMAGE_TYPES
-    ):
+        for page_number in range(
+            document.page_count
+        ):
+
+            page = (
+                document.load_page(
+                    page_number
+                )
+            )
+
+
+            pixmap = (
+                page.get_pixmap(
+                    matrix=
+                        fitz.Matrix(
+                            1.35,
+                            1.35,
+                        ),
+                    alpha=False,
+                )
+            )
+
+
+            render_html(
+                f"""
+                <div class="preview-page">
+                    Page {page_number + 1}
+                </div>
+                """
+            )
+
+
+            st.image(
+                pixmap.tobytes(
+                    "png"
+                ),
+                use_container_width=True,
+            )
+
+
+            if (
+                page_number
+                <
+                document.page_count - 1
+            ):
+
+                st.divider()
+
+
+    finally:
+
+        document.close()
+
+
+# ============================================================
+# IMAGE PREVIEW
+# ============================================================
+
+def preview_image(
+    uploaded_file,
+):
+
+    uploaded_file.seek(
+        0
+    )
+
+
+    image = (
+        Image.open(
+            uploaded_file
+        )
+    )
+
+
+    try:
 
         st.image(
-            file_bytes,
+            image,
             caption=
                 uploaded_file.name,
             use_container_width=True,
         )
 
 
+    finally:
+
+        try:
+
+            image.close()
+
+        except Exception:
+
+            pass
+
+
 # ============================================================
-# PROCESS UPLOADED INVOICE
+# GENERAL PREVIEW
 # ============================================================
 
-def process_uploaded_invoice(
+def preview_uploaded_file(
     uploaded_file,
-    process_function,
 ):
 
-    extension = (
+    suffix = (
 
         Path(
             uploaded_file.name
@@ -774,93 +1201,492 @@ def process_uploaded_invoice(
     )
 
 
-    temporary_path = None
+    try:
+
+        if suffix == ".pdf":
+
+            preview_pdf(
+                uploaded_file
+            )
+
+        else:
+
+            preview_image(
+                uploaded_file
+            )
+
+
+    except Exception as error:
+
+        st.warning(
+            "Preview could not be displayed."
+        )
+
+
+        st.caption(
+            f"Preview error: {error}"
+        )
+
+
+# ============================================================
+# RUN INFERENCE
+# ============================================================
+
+def process_upload(
+    uploaded_file,
+    process_invoice_final,
+):
+
+    suffix = (
+
+        Path(
+            uploaded_file.name
+        )
+        .suffix
+        .lower()
+
+        or
+
+        ".bin"
+
+    )
+
+
+    temp_path = None
 
 
     try:
 
-        # Runtime expects a physical file path.
         with tempfile.NamedTemporaryFile(
-            delete=False,
-            suffix=extension,
-        ) as temporary_file:
 
-            temporary_file.write(
+            mode="wb",
+
+            suffix=suffix,
+
+            delete=False,
+
+        ) as temp_file:
+
+            temp_file.write(
                 uploaded_file.getvalue()
             )
 
 
-            temporary_path = (
-                temporary_file.name
+            temp_path = (
+                Path(
+                    temp_file.name
+                )
             )
 
 
-        # ====================================================
-        # VERIFIED FINAL PRODUCTION ENTRY POINT
-        # ====================================================
-
-        result = process_function(
-            temporary_path
+        result = (
+            process_invoice_final(
+                str(
+                    temp_path
+                )
+            )
         )
 
 
-        return result
+        return (
+            make_json_safe(
+                result
+            )
+        )
 
 
     finally:
 
-        # Always remove temporary invoice copy.
-        if temporary_path:
+        if (
+            temp_path
+            is not None
+        ):
 
             try:
 
-                os.remove(
-                    temporary_path
+                temp_path.unlink(
+                    missing_ok=True
                 )
 
-            except OSError:
+            except Exception:
 
                 pass
 
 
 # ============================================================
-# INITIALIZE FINAL ENGINE
+# SUMMARY CARDS
 # ============================================================
 
-try:
+def render_summary(
+    fields: dict,
+):
 
-    with st.spinner(
-        "Initializing Invoice AI V3..."
+    st.subheader(
+        "Invoice Summary"
+    )
+
+
+    cards = [
+        (
+            "Vendor",
+            display_value(
+                fields.get(
+                    "VENDOR_NAME"
+                )
+            ),
+        ),
+
+        (
+            "Invoice #",
+            display_value(
+                fields.get(
+                    "INVOICE_NUMBER"
+                )
+            ),
+        ),
+
+        (
+            "Invoice Date",
+            display_value(
+                fields.get(
+                    "INVOICE_DATE"
+                )
+            ),
+        ),
+
+        (
+            "Total Amount",
+            display_value(
+                fields.get(
+                    "TOTAL_AMOUNT"
+                )
+            ),
+        ),
+    ]
+
+
+    columns = (
+        st.columns(
+            4
+        )
+    )
+
+
+    for (
+        column,
+        (
+            label,
+            value,
+        ),
+    ) in zip(
+        columns,
+        cards,
     ):
 
-        engine = (
-            get_engine()
+        with column:
+
+            safe_label = (
+                html.escape(
+                    str(
+                        label
+                    )
+                )
+            )
+
+
+            if (
+                value
+                ==
+                "NOT_DETECTED"
+            ):
+
+                safe_value = (
+                    '<span class="not-detected">'
+                    'NOT_DETECTED'
+                    '</span>'
+                )
+
+            else:
+
+                safe_value = (
+                    html.escape(
+                        str(
+                            value
+                        )
+                    )
+                )
+
+
+            render_html(
+                f"""
+                <div class="section-card">
+                    <div class="mini-label">
+                        {safe_label}
+                    </div>
+
+                    <div class="mini-value">
+                        {safe_value}
+                    </div>
+                </div>
+                """
+            )
+
+
+# ============================================================
+# FIELD TABLE
+# ============================================================
+
+def render_fields(
+    fields: dict,
+):
+
+    rows = [
+        {
+            "Field":
+                FIELD_LABELS.get(
+                    field,
+                    field,
+                ),
+
+            "Value":
+                display_value(
+                    fields.get(
+                        field
+                    )
+                ),
+        }
+
+        for field
+        in EXPECTED_FIELDS
+    ]
+
+
+    dataframe = (
+        pd.DataFrame(
+            rows
+        )
+    )
+
+
+    st.dataframe(
+        dataframe,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "Field":
+                st.column_config.TextColumn(
+                    "Field",
+                    width="medium",
+                ),
+
+            "Value":
+                st.column_config.TextColumn(
+                    "Extracted Value",
+                    width="large",
+                ),
+        },
+    )
+
+
+# ============================================================
+# LINE ITEMS
+# ============================================================
+
+def render_line_items(
+    result,
+):
+
+    table = (
+        find_table(
+            result
+        )
+    )
+
+
+    if table is None:
+
+        st.info(
+            "No structured line-item table "
+            "was returned for this invoice."
+        )
+
+        return
+
+
+    if isinstance(
+        table,
+        dict,
+    ):
+
+        try:
+
+            dataframe = (
+                pd.DataFrame(
+                    table
+                )
+            )
+
+        except Exception:
+
+            dataframe = (
+                pd.DataFrame(
+                    [
+                        {
+                            "Key":
+                                key,
+
+                            "Value":
+                                display_value(
+                                    value
+                                ),
+                        }
+
+                        for key, value
+                        in table.items()
+                    ]
+                )
+            )
+
+
+    else:
+
+        dataframe = (
+            pd.DataFrame(
+                table
+            )
         )
 
 
-except Exception as error:
+    if dataframe.empty:
 
-    st.title(
-        "🧾 Invoice Intelligence AI"
+        st.info(
+            "No structured line-item rows were returned."
+        )
+
+        return
+
+
+    st.dataframe(
+        dataframe,
+        use_container_width=True,
+        hide_index=True,
     )
-
-
-    st.error(
-        "❌ Production engine initialization failed"
-    )
-
-
-    st.exception(
-        error
-    )
-
-
-    st.stop()
 
 
 # ============================================================
-# VERIFIED FINAL ENTRY POINT
+# RESULTS
 # ============================================================
+
+def render_results(
+    result,
+):
+
+    fields = (
+        normalized_fields(
+            result
+        )
+    )
+
+
+    st.success(
+        "✅ Invoice processed successfully"
+    )
+
+
+    render_summary(
+        fields
+    )
+
+
+    (
+        tab_fields,
+        tab_items,
+        tab_structured,
+        tab_json,
+    ) = st.tabs(
+        [
+            "Extracted Fields",
+            "Line Items",
+            "Structured Result",
+            "Raw JSON",
+        ]
+    )
+
+
+    with tab_fields:
+
+        st.markdown(
+            "#### 16-field extraction"
+        )
+
+        render_fields(
+            fields
+        )
+
+
+    with tab_items:
+
+        st.markdown(
+            "#### Material / line-item extraction"
+        )
+
+        render_line_items(
+            result
+        )
+
+
+    with tab_structured:
+
+        st.markdown(
+            "#### Complete structured output"
+        )
+
+        st.write(
+            result
+        )
+
+
+    with tab_json:
+
+        st.markdown(
+            "#### Raw JSON"
+        )
+
+        st.json(
+            result
+        )
+
+
+    json_bytes = (
+        json.dumps(
+            result,
+            indent=2,
+            ensure_ascii=False,
+        )
+        .encode(
+            "utf-8"
+        )
+    )
+
+
+    st.download_button(
+        "⬇ Download JSON Result",
+        data=json_bytes,
+        file_name=
+            "invoice_extraction.json",
+        mime=
+            "application/json",
+    )
+
+
+# ============================================================
+# START ENGINE
+# ============================================================
+
+engine = (
+    initialize_engine()
+)
+
 
 process_invoice_final = (
     engine[
@@ -870,191 +1696,213 @@ process_invoice_final = (
 
 
 # ============================================================
+# HERO
+# ============================================================
+
+render_html(
+    """
+    <div class="hero">
+
+        <div class="hero-kicker">
+            Production Document Intelligence
+        </div>
+
+        <div class="hero-title">
+            🧾 Invoice Intelligence AI
+        </div>
+
+        <div class="hero-sub">
+            Upload an invoice and extract structured invoice fields,
+            line items, tax information and financial values using
+            the verified Invoice AI V3 production pipeline.
+        </div>
+
+        <div class="status-pill">
+
+            <span class="status-dot"></span>
+
+            Production engine online
+
+        </div>
+
+    </div>
+    """
+)
+
+
+# ============================================================
 # SIDEBAR
 # ============================================================
 
 with st.sidebar:
 
-    st.header(
-        "🧾 Invoice AI V3"
+    st.markdown(
+        "## 🧾 Invoice AI V3"
+    )
+
+
+    st.caption(
+        "Production Engine"
     )
 
 
     st.success(
-        "● Production Engine Ready"
+        "● Engine Ready"
     )
+
+
+    left, right = (
+        st.columns(
+            2
+        )
+    )
+
+
+    with left:
+
+        st.metric(
+            "Fields",
+            len(
+                engine.get(
+                    "fields",
+                    EXPECTED_FIELDS,
+                )
+            ),
+        )
+
+
+    with right:
+
+        st.metric(
+            "BIO Labels",
+            len(
+                engine.get(
+                    "label_list",
+                    [],
+                )
+            ),
+        )
 
 
     st.metric(
         "Parameters",
-        f"{engine['parameter_count']:,}",
-    )
-
-
-    field_column, label_column = (
-        st.columns(2)
-    )
-
-
-    field_column.metric(
-        "Fields",
-        len(
-            engine["fields"]
-        ),
-    )
-
-
-    label_column.metric(
-        "BIO Labels",
-        len(
-            engine[
-                "label_list"
-            ]
-        ),
+        f"{engine.get('parameter_count', 0):,}",
     )
 
 
     st.metric(
         "Device",
         str(
-            engine[
-                "device"
-            ]
+            engine.get(
+                "device",
+                "cpu",
+            )
         ).upper(),
     )
 
-
-    # --------------------------------------------------------
-    # ENGINE DETAILS
-    # --------------------------------------------------------
 
     with st.expander(
         "Engine Details"
     ):
 
         st.write(
-            "**Architecture**"
+            {
+                "Architecture":
+                    engine[
+                        "model"
+                    ].__class__.__name__,
+
+                "Runtime":
+                    "V3 + V6.1",
+
+                "Entry Point":
+                    "process_invoice_final(path)",
+
+                "OCR":
+                    "Lazy fallback",
+
+                "Model Reload":
+                    "Disabled / Cached",
+            }
         )
 
 
-        st.code(
-            engine[
-                "model"
-            ].__class__.__name__,
-            language=None,
-        )
+    st.divider()
 
-
-        st.write(
-            "**Runtime Loader**"
-        )
-
-
-        st.code(
-            str(
-                engine[
-                    "runtime_loader"
-                ]
-            ),
-            language=None,
-        )
-
-
-        st.write(
-            "**Final Entry Point**"
-        )
-
-
-        st.code(
-            "process_invoice_final(path)",
-            language=None,
-        )
-
-
-        st.write(
-            "**Runtime Stack**"
-        )
-
-
-        st.caption(
-            "V3 Model → Base Processor → "
-            "V3/V4/V5 → V6 → V6.1 → "
-            "Final V3 Integration"
-        )
-
-
-    # --------------------------------------------------------
-    # CLEAR RESULT
-    # --------------------------------------------------------
 
     if st.button(
-        "🗑️ Clear Current Result",
+        "Clear Current Result",
         use_container_width=True,
     ):
 
-        for key in [
-
+        st.session_state.pop(
             "invoice_result",
-            "processed_filename",
+            None,
+        )
 
-        ]:
 
-            st.session_state.pop(
-                key,
-                None,
-            )
+        st.session_state.pop(
+            "invoice_result_name",
+            None,
+        )
 
 
         st.rerun()
 
 
 # ============================================================
-# MAIN HEADER
+# UPLOAD
 # ============================================================
 
-st.title(
-    "🧾 Invoice Intelligence AI"
-)
-
-
-st.caption(
-    "Invoice AI V3 — "
-    "Final Production Inference System"
-)
-
-
-st.success(
-    "🔥 Production engine online"
-)
-
-
-# ============================================================
-# UPLOAD AREA
-# ============================================================
-
-st.header(
-    "1. Upload Invoice"
+st.markdown(
+    "### 1. Upload Invoice"
 )
 
 
 uploaded_file = (
     st.file_uploader(
-        "Select an invoice",
-        type=
-            SUPPORTED_TYPES,
+        "Choose a PDF or invoice image",
+
+        type=[
+            "pdf",
+            "png",
+            "jpg",
+            "jpeg",
+            "webp",
+            "bmp",
+            "tiff",
+            "tif",
+        ],
+
         help=(
             "Supported formats: "
             "PDF, PNG, JPG, JPEG, "
-            "WEBP, BMP and TIFF"
+            "WEBP, BMP and TIFF."
         ),
     )
 )
 
 
+# ============================================================
+# EMPTY STATE
+# ============================================================
+
 if uploaded_file is None:
 
-    st.info(
-        "Upload an invoice above to begin extraction."
+    render_html(
+        """
+        <div class="ready-card">
+
+            <div class="ready-title">
+                Ready
+            </div>
+
+            <div class="ready-text">
+                Upload an invoice to begin extraction.
+            </div>
+
+        </div>
+        """
     )
 
 
@@ -1072,57 +1920,68 @@ file_size_mb = (
     )
 
     /
+
     (
         1024
         *
         1024
     )
-
 )
 
 
 file_col, size_col = (
-    st.columns(2)
-)
-
-
-file_col.metric(
-    "File",
-    uploaded_file.name,
-)
-
-
-size_col.metric(
-    "Size",
-    f"{file_size_mb:.2f} MB",
-)
-
-
-# ============================================================
-# PREVIEW + PROCESS CONTROLS
-# ============================================================
-
-preview_column, process_column = (
-
     st.columns(
         [
-            1.45,
-            0.80,
+            3,
+            1,
+        ]
+    )
+)
+
+
+with file_col:
+
+    st.caption(
+        "FILE"
+    )
+
+
+    st.markdown(
+        f"**{uploaded_file.name}**"
+    )
+
+
+with size_col:
+
+    st.caption(
+        "SIZE"
+    )
+
+
+    st.markdown(
+        f"**{file_size_mb:.2f} MB**"
+    )
+
+
+# ============================================================
+# PREVIEW + EXTRACT
+# ============================================================
+
+preview_col, action_col = (
+    st.columns(
+        [
+            2.15,
+            1,
         ],
         gap="large",
     )
-
 )
 
 
-# ============================================================
-# PREVIEW
-# ============================================================
+with preview_col:
 
-with preview_column:
-
-    st.header(
-        "2. Invoice Preview"
+    st.markdown(
+        "### 2. Invoice Preview"
     )
 
 
@@ -1130,42 +1989,42 @@ with preview_column:
         border=True
     ):
 
-        render_file_preview(
+        preview_uploaded_file(
             uploaded_file
         )
 
 
-# ============================================================
-# PROCESS CONTROLS
-# ============================================================
+with action_col:
 
-with process_column:
-
-    st.header(
-        "3. Extract"
+    st.markdown(
+        "### 3. Extract"
     )
 
 
     st.write(
-        "The production engine automatically chooses "
-        "native extraction or OCR based on the invoice."
+        "The production engine automatically "
+        "chooses native extraction or OCR "
+        "based on the invoice."
+    )
+
+
+    st.markdown(
+        "**Production Pipeline**"
     )
 
 
     st.markdown(
         """
-**Production Pipeline**
-
-- Native PDF extraction
-- OCR fallback when required
-- LayoutLMv3 inference
-- Overlap-safe chunking
-- BIO field extraction
-- Anchor / regex recovery
-- GST reconciliation
-- Financial validation
-- Material / line-table extraction
-- V3 / V6.1 protection layers
+        - Native PDF extraction
+        - OCR fallback when required
+        - LayoutLMv3 inference
+        - Overlap-safe chunking
+        - BIO field extraction
+        - Anchor / regex recovery
+        - GST reconciliation
+        - Financial validation
+        - Material / line-table extraction
+        - V3 / V6.1 protection layers
         """
     )
 
@@ -1179,420 +2038,80 @@ with process_column:
     )
 
 
-# ============================================================
-# RUN INFERENCE
-# ============================================================
+    if process_clicked:
 
-if process_clicked:
+        try:
 
-    try:
+            with st.spinner(
+                "Analyzing invoice..."
+            ):
 
-        with st.spinner(
-            "Processing invoice... "
-            "OCR-heavy documents may take longer on CPU."
-        ):
-
-            raw_result = (
-                process_uploaded_invoice(
-                    uploaded_file,
-                    process_invoice_final,
+                result = (
+                    process_upload(
+                        uploaded_file,
+                        process_invoice_final,
+                    )
                 )
+
+
+            st.session_state[
+                "invoice_result"
+            ] = result
+
+
+            st.session_state[
+                "invoice_result_name"
+            ] = (
+                uploaded_file.name
             )
 
 
-        safe_result = (
-            to_json_safe(
-                raw_result
+        except Exception as error:
+
+            st.error(
+                "❌ Invoice processing failed"
             )
-        )
 
 
-        st.session_state[
-            "invoice_result"
-        ] = safe_result
-
-
-        st.session_state[
-            "processed_filename"
-        ] = uploaded_file.name
-
-
-        st.success(
-            "✅ Invoice processed successfully"
-        )
-
-
-    except Exception as error:
-
-        st.error(
-            "❌ Invoice processing failed"
-        )
-
-
-        st.exception(
-            error
-        )
-
-
-        st.stop()
+            st.exception(
+                error
+            )
 
 
 # ============================================================
-# GET EXISTING RESULT
+# STORED RESULT
 # ============================================================
 
-result = (
+current_result = (
     st.session_state.get(
         "invoice_result"
     )
 )
 
 
-processed_filename = (
+current_name = (
     st.session_state.get(
-        "processed_filename"
+        "invoice_result_name"
     )
 )
 
-
-if result is None:
-
-    st.stop()
-
-
-# ============================================================
-# DIFFERENT UPLOAD WARNING
-# ============================================================
 
 if (
-
-    processed_filename
-
+    current_result is not None
     and
-
-    processed_filename
-    !=
+    current_name
+    ==
     uploaded_file.name
-
 ):
 
-    st.warning(
-        "The result below belongs to "
-        f"`{processed_filename}`. "
-        "Click **Process Invoice** to process "
-        "the newly uploaded file."
+    st.divider()
+
+
+    st.markdown(
+        "## 4. Extraction Results"
     )
 
 
-# ============================================================
-# RESULTS
-# ============================================================
-
-st.divider()
-
-
-st.header(
-    "4. Extraction Results"
-)
-
-
-# ============================================================
-# EXTRACT MAIN FIELD DICTIONARY
-# ============================================================
-
-field_dictionary = (
-    find_best_field_dict(
-        result
+    render_results(
+        current_result
     )
-)
-
-
-field_lookup = (
-    normalize_field_lookup(
-        field_dictionary
-    )
-)
-
-
-# ============================================================
-# QUICK SUMMARY CARDS
-# ============================================================
-
-if field_lookup:
-
-    vendor = display_value(
-        field_lookup.get(
-            "VENDOR_NAME"
-        )
-    )
-
-
-    invoice_number = display_value(
-        field_lookup.get(
-            "INVOICE_NUMBER"
-        )
-    )
-
-
-    invoice_date = display_value(
-        field_lookup.get(
-            "INVOICE_DATE"
-        )
-    )
-
-
-    total_amount = display_value(
-        field_lookup.get(
-            "TOTAL_AMOUNT"
-        )
-    )
-
-
-    summary1, summary2, summary3, summary4 = (
-        st.columns(4)
-    )
-
-
-    summary1.metric(
-        "Vendor",
-        vendor,
-    )
-
-
-    summary2.metric(
-        "Invoice Number",
-        invoice_number,
-    )
-
-
-    summary3.metric(
-        "Invoice Date",
-        invoice_date,
-    )
-
-
-    summary4.metric(
-        "Total Amount",
-        total_amount,
-    )
-
-
-# ============================================================
-# 16 PRODUCTION FIELDS
-# ============================================================
-
-if field_dictionary is not None:
-
-    st.subheader(
-        "Extracted Invoice Fields"
-    )
-
-
-    field_rows = []
-
-
-    detected_count = 0
-
-
-    for field in (
-        EXPECTED_FIELD_ORDER
-    ):
-
-        value = (
-            display_value(
-                field_lookup.get(
-                    field
-                )
-            )
-        )
-
-
-        if (
-            value
-            !=
-            "NOT_DETECTED"
-        ):
-
-            detected_count += 1
-
-
-        field_rows.append(
-            {
-                "Field":
-                    field,
-
-                "Value":
-                    value,
-            }
-        )
-
-
-    detected_col, missing_col = (
-        st.columns(2)
-    )
-
-
-    detected_col.metric(
-        "Detected Fields",
-        f"{detected_count}/16",
-    )
-
-
-    missing_col.metric(
-        "Not Detected",
-        16 - detected_count,
-    )
-
-
-    st.dataframe(
-        field_rows,
-        use_container_width=True,
-        hide_index=True,
-    )
-
-
-# ============================================================
-# LINE ITEMS / MATERIAL TABLE
-# ============================================================
-
-table_name, table_rows = (
-    find_tabular_data(
-        result
-    )
-)
-
-
-if table_rows:
-
-    st.subheader(
-        "Line Items / Material Table"
-    )
-
-
-    st.caption(
-        "Runtime section: "
-        f"{table_name}"
-    )
-
-
-    st.dataframe(
-        table_rows,
-        use_container_width=True,
-        hide_index=True,
-    )
-
-
-# ============================================================
-# COMPLETE STRUCTURED OUTPUT
-# ============================================================
-
-st.subheader(
-    "Complete Production Output"
-)
-
-
-structured_tab, json_tab = (
-    st.tabs(
-        [
-            "Structured View",
-            "Raw JSON",
-        ]
-    )
-)
-
-
-with structured_tab:
-
-    if isinstance(
-        result,
-        dict,
-    ):
-
-        st.json(
-            result,
-            expanded=False,
-        )
-
-
-    else:
-
-        st.write(
-            result
-        )
-
-
-with json_tab:
-
-    json_text = (
-        json.dumps(
-            result,
-            indent=2,
-            ensure_ascii=False,
-        )
-    )
-
-
-    st.code(
-        json_text,
-        language="json",
-    )
-
-
-# ============================================================
-# DOWNLOAD RESULT
-# ============================================================
-
-st.header(
-    "5. Export Result"
-)
-
-
-base_filename = (
-
-    Path(
-        processed_filename
-        or
-        uploaded_file.name
-    )
-    .stem
-
-)
-
-
-json_filename = (
-    base_filename
-    +
-    "_Invoice_AI_V3.json"
-)
-
-
-st.download_button(
-    label=
-        "⬇️ Download Structured JSON",
-    data=
-        create_json_bytes(
-            result
-        ),
-    file_name=
-        json_filename,
-    mime=
-        "application/json",
-    type=
-        "primary",
-    use_container_width=True,
-)
-
-
-# ============================================================
-# FOOTER
-# ============================================================
-
-st.divider()
-
-
-st.caption(
-    "Invoice AI V3 • "
-    "LayoutLMv3 • "
-    "Final V6.1 Production Runtime • "
-    "No retraining during inference"
-)
