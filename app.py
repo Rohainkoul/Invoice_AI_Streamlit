@@ -39,7 +39,7 @@ except ImportError:
 from invoice_engine import (
     EXPECTED_FIELDS,
     load_v3_production_engine,
-    process_invoice_with_dynamic,
+    process_invoice_auto_dynamic,
 )
 
 
@@ -2635,8 +2635,6 @@ def clean_dynamic_result(
 
 def process_upload(
     uploaded_file,
-    auto_fields: list[str],
-    manual_fields: list[str],
 ):
 
     suffix = (
@@ -2648,38 +2646,6 @@ def process_upload(
         or
         ".bin"
     )
-
-    requested_fields = []
-
-    seen = set()
-
-    for field in (
-        auto_fields
-        +
-        manual_fields
-    ):
-
-        canonical = normalize_label(
-            field
-        )
-
-        key = normalized_label_key(
-            canonical
-        )
-
-        if not key:
-            continue
-
-        if key in seen:
-            continue
-
-        seen.add(
-            key
-        )
-
-        requested_fields.append(
-            canonical
-        )
 
     temp_path = None
 
@@ -2699,42 +2665,37 @@ def process_upload(
                 temp_file.name
             )
 
+        # ====================================================
+        # FINAL ARCHITECTURE
+        #
+        # app.py:
+        #   uploads document
+        #   displays result
+        #
+        # invoice_engine.py:
+        #   LayoutLMv3 16-field inference
+        #   automatic extra-field discovery
+        #   dynamic value extraction
+        #   HSN protection
+        #   GST reconciliation
+        #   combined structured result
+        #
+        # No schema is supplied by Streamlit.
+        # ====================================================
+
         result = (
-            process_invoice_with_dynamic(
+            process_invoice_auto_dynamic(
                 str(
                     temp_path
-                ),
-                requested_fields=
-                    requested_fields,
+                )
             )
         )
 
-        result = (
+        return (
             make_json_safe(
                 result
             )
         )
-
-        result[
-            "auto_discovered_parameters"
-        ] = auto_fields
-
-        result[
-            "manual_parameters"
-        ] = manual_fields
-
-        result[
-            "dynamic_discovery_mode"
-        ] = (
-            "AUTOMATIC_SCHEMA_DISCOVERY"
-        )
-
-        result = clean_dynamic_result(
-            result,
-            uploaded_file,
-        )
-
-        return result
 
     finally:
 
@@ -3510,9 +3471,8 @@ if uploaded_file is None:
 # AUTOMATIC FIELD DISCOVERY
 # ============================================================
 
-auto_fields = discover_dynamic_fields(
-    uploaded_file
-)
+# Automatic discovery now occurs inside invoice_engine.py.
+auto_fields = []
 
 
 # ============================================================
@@ -3613,44 +3573,15 @@ with action_col:
         """
     )
 
-    st.metric(
-        "Potential Additional Fields",
-        len(
-            auto_fields
-        ),
+    st.info(
+        "Additional invoice fields are discovered automatically "
+        "inside the Invoice AI inference engine when processing runs."
     )
 
-    if auto_fields:
-
-        with st.expander(
-            "Auto-discovered schema",
-            expanded=False,
-        ):
-
-            for field in auto_fields:
-
-                st.write(
-                    f"• {field}"
-                )
-
-    with st.expander(
-        "Advanced: Add Manual Parameter",
-        expanded=False,
-    ):
-
-        manual_input = st.text_area(
-            "Optional additional fields",
-
-            placeholder=(
-                "Only use this if a specific field "
-                "must be forced manually."
-            ),
-
-            height=100,
-        )
-
-    manual_fields = parse_manual_parameters(
-        manual_input
+    st.caption(
+        "No manual parameter list is required. "
+        "Additional fields are discovered automatically "
+        "inside the inference engine."
     )
 
     st.markdown(
@@ -3686,8 +3617,6 @@ with action_col:
 
                 result = process_upload(
                     uploaded_file,
-                    auto_fields,
-                    manual_fields,
                 )
 
             st.session_state[

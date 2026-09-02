@@ -4917,6 +4917,1436 @@ def process_invoice_with_dynamic(
 
 
 # ============================================================
+# AUTOMATIC DYNAMIC SCHEMA DISCOVERY
+# BACKEND / INFERENCE-ENGINE LAYER
+# ============================================================
+
+AUTO_DYNAMIC_SCHEMA_MODE = "AUTOMATIC_SCHEMA_DISCOVERY"
+
+
+_AUTO_TRAINED_SCHEMA_ALIASES = {
+    "vendor",
+    "vendor name",
+    "seller",
+    "seller name",
+    "supplier",
+    "supplier name",
+
+    "invoice",
+    "invoice no",
+    "invoice number",
+    "invoice id",
+    "inv no",
+    "inv number",
+
+    "document no",
+    "document number",
+    "doc no",
+    "doc number",
+
+    "invoice date",
+    "due date",
+
+    "customer",
+    "customer name",
+    "buyer",
+    "buyer name",
+
+    "address",
+    "billing address",
+    "shipping address",
+
+    "currency",
+
+    "subtotal",
+    "sub total",
+
+    "total",
+    "total amount",
+    "grand total",
+    "invoice total",
+
+    "tax",
+    "tax amount",
+
+    "discount",
+    "payment terms",
+}
+
+
+_AUTO_LABEL_BLACKLIST = {
+    "",
+    "no",
+    "number",
+    "code",
+    "value",
+
+    "to",
+    "from",
+
+    "description",
+    "material",
+    "material code",
+
+    "quantity",
+    "qty",
+    "rate",
+    "amount",
+
+    "uom",
+    "unit",
+    "unit price",
+
+    "sl",
+    "sl no",
+    "serial",
+    "serial no",
+    "serial number",
+
+    "dear sir",
+    "dear madam",
+
+    "prepared by",
+    "checked by",
+
+    "narration",
+}
+
+
+def _auto_clean_spaces(value):
+
+    return re.sub(
+        r"\s+",
+        " ",
+        str(value),
+    ).strip()
+
+
+def _auto_normalize_label(value):
+
+    text = _auto_clean_spaces(
+        value
+    )
+
+    if not text:
+        return ""
+
+    text = re.sub(
+        r"(?i)\bP\s*\.\s*O\s*\.?",
+        "PO",
+        text,
+    )
+
+    text = re.sub(
+        r"(?i)\bG\s*\.\s*R\s*\.?",
+        "GR",
+        text,
+    )
+
+    text = re.sub(
+        r"(?i)\bB\s*\.\s*Value\b",
+        "B Value",
+        text,
+    )
+
+    text = re.sub(
+        r"(?i)\bPh\s*\.?\s*No\.?",
+        "Phone Number",
+        text,
+    )
+
+    text = re.sub(
+        r"(?i)\bPONO\.?\b",
+        "PO Number",
+        text,
+    )
+
+    text = re.sub(
+        r"(?i)\bGRNO\.?\b",
+        "GR Number",
+        text,
+    )
+
+    text = re.sub(
+        r"[:=]+$",
+        "",
+        text,
+    ).strip()
+
+    simple = text.casefold()
+
+    simple = re.sub(
+        r"[^a-z0-9]+",
+        " ",
+        simple,
+    )
+
+    simple = _auto_clean_spaces(
+        simple
+    )
+
+    canonical = {
+
+        "po":
+            "PO Number",
+
+        "po no":
+            "PO Number",
+
+        "po number":
+            "PO Number",
+
+        "pono":
+            "PO Number",
+
+        "purchase order":
+            "PO Number",
+
+        "purchase order no":
+            "PO Number",
+
+        "purchase order number":
+            "PO Number",
+
+        "gr":
+            "GR Number",
+
+        "gr no":
+            "GR Number",
+
+        "gr number":
+            "GR Number",
+
+        "grno":
+            "GR Number",
+
+        "goods receipt no":
+            "GR Number",
+
+        "goods receipt number":
+            "GR Number",
+
+        "odn no":
+            "ODN Number",
+
+        "odn number":
+            "ODN Number",
+
+        "hsn":
+            "HSN Code",
+
+        "hsn code":
+            "HSN Code",
+
+        "hsn sac":
+            "HSN Code",
+
+        "sac code":
+            "HSN Code",
+
+        "gst no":
+            "GSTIN",
+
+        "gst number":
+            "GSTIN",
+
+        "gstin":
+            "GSTIN",
+
+        "pan no":
+            "PAN",
+
+        "pan number":
+            "PAN",
+
+        "cin no":
+            "CIN",
+
+        "cin number":
+            "CIN",
+
+        "ifsc":
+            "IFSC Code",
+
+        "ph no":
+            "Phone Number",
+
+        "phone no":
+            "Phone Number",
+
+        "phone number":
+            "Phone Number",
+
+        "mobile no":
+            "Phone Number",
+
+        "mobile number":
+            "Phone Number",
+
+        "email id":
+            "Email",
+
+        "email address":
+            "Email",
+
+        "b value":
+            "B Value",
+
+        "bvalue":
+            "B Value",
+
+        "state code":
+            "State Code",
+
+        "state name":
+            "State Name",
+
+        "place of supply":
+            "Place of Supply",
+
+        "cgst":
+            "CGST",
+
+        "sgst":
+            "SGST",
+
+        "igst":
+            "IGST",
+
+        "reference no":
+            "Reference Number",
+
+        "reference number":
+            "Reference Number",
+
+        "ref no":
+            "Reference Number",
+    }
+
+    return canonical.get(
+        simple,
+        text,
+    )
+
+
+def _auto_label_key(value):
+
+    text = _auto_normalize_label(
+        value
+    ).casefold()
+
+    text = re.sub(
+        r"[^a-z0-9]+",
+        " ",
+        text,
+    )
+
+    return _auto_clean_spaces(
+        text
+    )
+
+
+def _auto_valid_label(value):
+
+    label = _auto_normalize_label(
+        value
+    )
+
+    key = _auto_label_key(
+        label
+    )
+
+    if not key:
+        return False
+
+    if key in _AUTO_TRAINED_SCHEMA_ALIASES:
+        return False
+
+    if key in _AUTO_LABEL_BLACKLIST:
+        return False
+
+    if len(label) < 2:
+        return False
+
+    if len(label) > 45:
+        return False
+
+    if not re.search(
+        r"[A-Za-z]",
+        label,
+    ):
+        return False
+
+    words = key.split()
+
+    if len(words) > 6:
+        return False
+
+    if re.search(
+        r"\b("
+        r"please|thank|thanks|rupees|"
+        r"faithfully|only|subject|description"
+        r")\b",
+        key,
+    ):
+        return False
+
+    return True
+
+
+def _auto_clean_label_segment(segment):
+
+    value = str(
+        segment
+    ).strip()
+
+    value = value.strip(
+        " ,;|"
+    )
+
+    for delimiter in (
+        ",",
+        ";",
+        "|",
+    ):
+
+        if delimiter in value:
+
+            value = (
+                value
+                .split(delimiter)[-1]
+                .strip()
+            )
+
+    previous_value_pattern = re.compile(
+        r"(?i)^("
+        r"\S+@\S+"
+        r"|"
+        r"[-+]?"
+        r"(?:₹|Rs\.?|INR|\$)?"
+        r"\d[\d,./%\-]*"
+        r"|"
+        r"[A-Z0-9/_\-]*\d[A-Z0-9/_\-]*"
+        r")\s+"
+    )
+
+    for _ in range(3):
+
+        changed = (
+            previous_value_pattern.sub(
+                "",
+                value,
+                count=1,
+            )
+        )
+
+        if changed == value:
+            break
+
+        value = changed.strip()
+
+    return value
+
+
+def _auto_labels_from_line(text):
+
+    text = str(
+        text
+    )
+
+    separators = list(
+        re.finditer(
+            r"[:=]",
+            text,
+        )
+    )
+
+    if not separators:
+        return []
+
+    output = []
+
+    previous_end = 0
+
+    for match in separators:
+
+        segment = text[
+            previous_end:
+            match.start()
+        ]
+
+        previous_end = (
+            match.end()
+        )
+
+        segment = (
+            _auto_clean_label_segment(
+                segment
+            )
+        )
+
+        if not segment:
+            continue
+
+        label = (
+            _auto_normalize_label(
+                segment
+            )
+        )
+
+        if not _auto_valid_label(
+            label
+        ):
+            continue
+
+        output.append(
+            label
+        )
+
+    return output
+
+
+def _auto_standalone_fields(lines):
+
+    text = "\n".join(
+        str(
+            line.get(
+                "text",
+                "",
+            )
+        )
+        for line
+        in lines
+    )
+
+    normalized = text.casefold()
+
+    normalized = re.sub(
+        r"[._]+",
+        " ",
+        normalized,
+    )
+
+    normalized = (
+        _auto_clean_spaces(
+            normalized
+        )
+    )
+
+    patterns = {
+
+        "GSTIN": [
+            r"\bgstin\b",
+        ],
+
+        "CIN": [
+            r"\bcin\b",
+        ],
+
+        "PAN": [
+            r"\bpan\b",
+        ],
+
+        "HSN Code": [
+            r"\bhsn\s+code\b",
+            r"\bhsn\s*/\s*sac\b",
+        ],
+
+        "ODN Number": [
+            r"\bodn\s+(?:no|number)\b",
+        ],
+
+        "PO Number": [
+            r"\bpo\s+(?:no|number)\b",
+            r"\bpono\b",
+            r"\bpurchase\s+order\b",
+        ],
+
+        "GR Number": [
+            r"\bgr\s+(?:no|number)\b",
+            r"\bgrno\b",
+        ],
+
+        "B Value": [
+            r"\bb\s+value\b",
+            r"\bbvalue\b",
+        ],
+
+        "Email": [
+            r"\bemail\b",
+        ],
+
+        "Phone Number": [
+            r"\bph\s+(?:no|number)\b",
+            r"\bphone\s+(?:no|number)\b",
+            r"\bmobile\s+(?:no|number)\b",
+        ],
+
+        "CGST": [
+            r"\bcgst\b",
+        ],
+
+        "SGST": [
+            r"\bsgst\b",
+        ],
+
+        "IGST": [
+            r"\bigst\b",
+        ],
+
+        "State Code": [
+            r"\bstate\s+code\b",
+        ],
+
+        "State Name": [
+            r"\bstate\s+name\b",
+        ],
+
+        "Place of Supply": [
+            r"\bplace\s+of\s+supply\b",
+        ],
+    }
+
+    output = []
+
+    for canonical, candidates in (
+        patterns.items()
+    ):
+
+        if any(
+            re.search(
+                pattern,
+                normalized,
+            )
+            for pattern
+            in candidates
+        ):
+
+            if _auto_valid_label(
+                canonical
+            ):
+
+                output.append(
+                    canonical
+                )
+
+    return output
+
+
+def discover_dynamic_fields(
+    input_path,
+    production_result=None,
+):
+
+    """
+    Automatically discover additional invoice fields from
+    the uploaded document itself.
+
+    IMPORTANT:
+    production_result is NOT used for schema discovery.
+
+    This prevents internal engine metadata such as:
+      schema_version
+      document_id
+      page_count
+      line_number
+      validation fields
+      overall_status
+      calculated_total
+      etc.
+
+    from being incorrectly treated as invoice fields.
+
+    production_result remains in the signature for backward
+    compatibility with the existing inference pipeline.
+    """
+
+    # ========================================================
+    # DOCUMENT-ONLY DYNAMIC SCHEMA DISCOVERY
+    # ========================================================
+
+    lines = (
+        _dynamic_pdf_lines(
+            input_path
+        )
+    )
+
+    discovered = []
+    seen = set()
+
+    def add_field(
+        raw_field,
+    ):
+
+        field = (
+            _auto_normalize_label(
+                raw_field
+            )
+        )
+
+        if not _auto_valid_label(
+            field
+        ):
+            return
+
+        key = (
+            _auto_label_key(
+                field
+            )
+        )
+
+        if not key:
+            return
+
+        if key in seen:
+            return
+
+        seen.add(
+            key
+        )
+
+        discovered.append(
+            field
+        )
+
+    # ========================================================
+    # EXPLICIT LABEL DISCOVERY
+    # ========================================================
+
+    for line in lines:
+
+        text = str(
+            line.get(
+                "text",
+                "",
+            )
+        )
+
+        for field in (
+            _auto_labels_from_line(
+                text
+            )
+        ):
+
+            add_field(
+                field
+            )
+
+    # ========================================================
+    # STRONG STANDALONE INVOICE LABELS
+    # ========================================================
+
+    for field in (
+        _auto_standalone_fields(
+            lines
+        )
+    ):
+
+        add_field(
+            field
+        )
+
+    return discovered[:40]
+
+
+def _auto_find_explicit_hsn(
+    input_path,
+):
+
+    lines = (
+        _dynamic_pdf_lines(
+            input_path
+        )
+    )
+
+    for index, line in enumerate(
+        lines
+    ):
+
+        text = str(
+            line.get(
+                "text",
+                "",
+            )
+        )
+
+        normalized = text.casefold()
+
+        normalized = re.sub(
+            r"[._\-]+",
+            " ",
+            normalized,
+        )
+
+        normalized = (
+            _auto_clean_spaces(
+                normalized
+            )
+        )
+
+        if (
+            "hsn code"
+            not in normalized
+            and
+            "hsn sac"
+            not in normalized
+        ):
+            continue
+
+        same_line = re.search(
+            r"(?i)"
+            r"HSN"
+            r"(?:\s*/\s*SAC)?"
+            r"(?:\s+Code)?"
+            r"\s*[:=\-]?\s*"
+            r"(\d{4,8})",
+            text,
+        )
+
+        if same_line:
+
+            value = (
+                same_line.group(
+                    1
+                )
+            )
+
+            if len(value) in {
+                4,
+                6,
+                8,
+            }:
+
+                return {
+                    "value":
+                        value,
+
+                    "page":
+                        line.get(
+                            "page"
+                        ),
+
+                    "evidence":
+                        text,
+                }
+
+        for offset in (
+            1,
+            2,
+            3,
+        ):
+
+            candidate_index = (
+                index
+                +
+                offset
+            )
+
+            if (
+                candidate_index
+                >=
+                len(
+                    lines
+                )
+            ):
+                break
+
+            candidate = (
+                lines[
+                    candidate_index
+                ]
+            )
+
+            if (
+                candidate.get(
+                    "page"
+                )
+                !=
+                line.get(
+                    "page"
+                )
+            ):
+                break
+
+            candidate_text = str(
+                candidate.get(
+                    "text",
+                    "",
+                )
+            ).strip()
+
+            match = re.fullmatch(
+                r"\d{4,8}",
+                candidate_text,
+            )
+
+            if not match:
+                continue
+
+            value = (
+                match.group(
+                    0
+                )
+            )
+
+            if len(value) not in {
+                4,
+                6,
+                8,
+            }:
+                continue
+
+            return {
+                "value":
+                    value,
+
+                "page":
+                    candidate.get(
+                        "page"
+                    ),
+
+                "evidence":
+                    candidate_text,
+            }
+
+    return None
+
+
+def _auto_find_gst_components(
+    payload,
+):
+
+    found = {}
+
+    def consume(item):
+
+        if not isinstance(
+            item,
+            dict,
+        ):
+            return
+
+        component_type = str(
+            item.get(
+                "type",
+                "",
+            )
+        ).upper().strip()
+
+        if component_type not in {
+            "CGST",
+            "SGST",
+            "IGST",
+        }:
+            return
+
+        amount = (
+            item.get(
+                "amount"
+            )
+        )
+
+        if amount is None:
+            return
+
+        if component_type in found:
+            return
+
+        found[
+            component_type
+        ] = {
+            "rate":
+                item.get(
+                    "rate_percent"
+                ),
+
+            "amount":
+                amount,
+
+            "page":
+                item.get(
+                    "page"
+                ),
+
+            "source":
+                item.get(
+                    "source",
+                    "PRODUCTION_GST_RECONCILIATION",
+                ),
+
+            "evidence":
+                item.get(
+                    "row_text"
+                ),
+        }
+
+    def walk(node):
+
+        if isinstance(
+            node,
+            dict,
+        ):
+
+            for key, value in (
+                node.items()
+            ):
+
+                if (
+                    key
+                    in {
+                        "gst_components",
+                        "gst_components_selected",
+                    }
+                    and
+                    isinstance(
+                        value,
+                        list,
+                    )
+                ):
+
+                    for item in value:
+                        consume(item)
+
+                walk(value)
+
+        elif isinstance(
+            node,
+            list,
+        ):
+
+            for item in node:
+                walk(item)
+
+    walk(
+        payload
+    )
+
+    return found
+
+
+def _auto_format_number(value):
+
+    try:
+
+        return (
+            f"{float(value):,.2f}"
+        )
+
+    except Exception:
+
+        return str(
+            value
+        )
+
+
+def _auto_cleanup_dynamic_fields(
+    input_path,
+    discovered_fields,
+    dynamic_fields,
+    production_result,
+):
+
+    cleaned = {}
+    seen = {}
+
+    for raw_name, information in (
+        dynamic_fields.items()
+    ):
+
+        name = (
+            _auto_normalize_label(
+                raw_name
+            )
+        )
+
+        if not _auto_valid_label(
+            name
+        ):
+            continue
+
+        key = (
+            _auto_label_key(
+                name
+            )
+        )
+
+        if not key:
+            continue
+
+        candidate_info = (
+            information
+            if isinstance(
+                information,
+                dict,
+            )
+            else
+            {}
+        )
+
+        existing_name = (
+            seen.get(
+                key
+            )
+        )
+
+        if existing_name is None:
+
+            cleaned[
+                name
+            ] = information
+
+            seen[
+                key
+            ] = name
+
+            continue
+
+        existing_info = (
+            cleaned.get(
+                existing_name,
+                {}
+            )
+        )
+
+        existing_detected = (
+            isinstance(
+                existing_info,
+                dict,
+            )
+            and
+            existing_info.get(
+                "status"
+            )
+            ==
+            "DETECTED"
+        )
+
+        candidate_detected = (
+            candidate_info.get(
+                "status"
+            )
+            ==
+            "DETECTED"
+        )
+
+        replace = False
+
+        if (
+            candidate_detected
+            and
+            not existing_detected
+        ):
+
+            replace = True
+
+        elif (
+            candidate_detected
+            ==
+            existing_detected
+        ):
+
+            existing_confidence = float(
+                existing_info.get(
+                    "confidence",
+                    0.0,
+                )
+                or
+                0.0
+            )
+
+            candidate_confidence = float(
+                candidate_info.get(
+                    "confidence",
+                    0.0,
+                )
+                or
+                0.0
+            )
+
+            if (
+                candidate_confidence
+                >
+                existing_confidence
+            ):
+
+                replace = True
+
+        if replace:
+
+            cleaned.pop(
+                existing_name,
+                None,
+            )
+
+            cleaned[
+                name
+            ] = information
+
+            seen[
+                key
+            ] = name
+
+    if (
+        "HSN Code"
+        in
+        discovered_fields
+    ):
+
+        repaired = (
+            _auto_find_explicit_hsn(
+                input_path
+            )
+        )
+
+        if repaired:
+
+            cleaned[
+                "HSN Code"
+            ] = {
+                "value":
+                    repaired[
+                        "value"
+                    ],
+
+                "status":
+                    "DETECTED",
+
+                "confidence":
+                    1.0,
+
+                "page":
+                    repaired[
+                        "page"
+                    ],
+
+                "source":
+                    "AUTO_EXPLICIT_LABEL",
+
+                "evidence":
+                    repaired[
+                        "evidence"
+                    ],
+            }
+
+    verified_gst = (
+        _auto_find_gst_components(
+            production_result
+        )
+    )
+
+    for tax_type in (
+        "CGST",
+        "SGST",
+        "IGST",
+    ):
+
+        if (
+            tax_type
+            not in
+            discovered_fields
+        ):
+            continue
+
+        component = (
+            verified_gst.get(
+                tax_type
+            )
+        )
+
+        if not component:
+            continue
+
+        rate = (
+            component.get(
+                "rate"
+            )
+        )
+
+        amount = (
+            component.get(
+                "amount"
+            )
+        )
+
+        if rate is not None:
+
+            try:
+
+                rate_text = (
+                    f"{float(rate):g}%"
+                )
+
+            except Exception:
+
+                rate_text = (
+                    f"{rate}%"
+                )
+
+            value = (
+                f"{rate_text} / "
+                f"{_auto_format_number(amount)}"
+            )
+
+        else:
+
+            value = (
+                _auto_format_number(
+                    amount
+                )
+            )
+
+        cleaned[
+            tax_type
+        ] = {
+            "value":
+                value,
+
+            "status":
+                "DETECTED",
+
+            "confidence":
+                1.0,
+
+            "page":
+                component.get(
+                    "page"
+                ),
+
+            "source":
+                "PRODUCTION_GST_RECONCILIATION",
+
+            "evidence":
+                (
+                    component.get(
+                        "evidence"
+                    )
+                    or
+                    component.get(
+                        "source"
+                    )
+                ),
+        }
+
+    return cleaned
+
+
+# Add useful aliases to the existing generic dynamic extractor.
+_DYNAMIC_SPECIAL_VARIANTS.setdefault(
+    "phone number",
+    set(),
+).update(
+    {
+        "phone number",
+        "phone no",
+        "ph no",
+        "ph number",
+        "mobile no",
+        "mobile number",
+        "telephone",
+        "tel",
+    }
+)
+
+
+def process_invoice_auto_dynamic(
+    input_path,
+    *,
+    min_dynamic_confidence=
+        DYNAMIC_MIN_CONFIDENCE,
+):
+
+    """
+    FINAL CLIENT-FACING INFERENCE ENTRY POINT.
+
+    The caller supplies only the document path.
+
+    The inference engine itself:
+      1. runs the verified V3 production model,
+      2. discovers additional document fields,
+      3. dynamically extracts their values,
+      4. applies HSN/GST protection,
+      5. returns one combined result.
+
+    No frontend-provided dynamic schema is required.
+    """
+
+    engine = (
+        load_v3_production_engine()
+    )
+
+    process_invoice_final = (
+        engine[
+            "process_invoice_final"
+        ]
+    )
+
+    production_result = (
+        process_invoice_final(
+            str(
+                input_path
+            )
+        )
+    )
+
+    discovered_fields = (
+        discover_dynamic_fields(
+            input_path,
+            production_result=
+                production_result,
+        )
+    )
+
+    dynamic_fields = (
+        extract_dynamic_parameters(
+            input_path,
+            discovered_fields,
+            production_result=
+                production_result,
+            min_confidence=
+                min_dynamic_confidence,
+        )
+    )
+
+    dynamic_fields = (
+        _auto_cleanup_dynamic_fields(
+            input_path,
+            discovered_fields,
+            dynamic_fields,
+            production_result,
+        )
+    )
+
+    return {
+        "production_result":
+            production_result,
+
+        "dynamic_fields":
+            dynamic_fields,
+
+        "auto_discovered_parameters":
+            discovered_fields,
+
+        "dynamic_requested":
+            [],
+
+        "manual_parameters":
+            [],
+
+        "dynamic_schema_mode":
+            AUTO_DYNAMIC_SCHEMA_MODE,
+
+        "dynamic_discovery_mode":
+            AUTO_DYNAMIC_SCHEMA_MODE,
+
+        "trained_schema_fields":
+            list(
+                EXPECTED_FIELDS
+            ),
+    }
+
+
+
+# ============================================================
 # MODEL VERIFICATION
 # ============================================================
 
