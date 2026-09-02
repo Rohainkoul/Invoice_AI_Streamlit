@@ -1,14 +1,18 @@
 from __future__ import annotations
 
 import argparse
+import difflib
 import hashlib
 import json
+import re
 import shutil
 import sys
+import unicodedata
 import zipfile
 
 from functools import lru_cache
 from pathlib import Path, PurePosixPath
+from typing import Any, Iterable
 
 import torch
 
@@ -16,6 +20,11 @@ from transformers import (
     LayoutLMv3ForTokenClassification,
     LayoutLMv3Processor,
 )
+
+try:
+    import pymupdf
+except ImportError:
+    pymupdf = None
 
 
 # ============================================================
@@ -43,7 +52,6 @@ EXPECTED_FIELDS = [
     "PAYMENT_TERMS",
 ]
 
-
 EXPECTED_LABELS = ["O"]
 
 for field in EXPECTED_FIELDS:
@@ -54,68 +62,37 @@ for field in EXPECTED_FIELDS:
         ]
     )
 
-
-EXPECTED_NUM_LABELS = len(
-    EXPECTED_LABELS
-)
+EXPECTED_NUM_LABELS = len(EXPECTED_LABELS)
 
 
 # ============================================================
 # PROJECT PATHS
 # ============================================================
 
-PROJECT_ROOT = (
-    Path(__file__)
-    .resolve()
-    .parent
-)
+PROJECT_ROOT = Path(__file__).resolve().parent
 
+ARTIFACTS_DIR = PROJECT_ROOT / "artifacts"
 
-ARTIFACTS_DIR = (
-    PROJECT_ROOT
-    / "artifacts"
-)
+CACHE_ROOT = PROJECT_ROOT / ".invoice_ai_cache"
 
+MODEL_CACHE_ROOT = CACHE_ROOT / "model"
 
-CACHE_ROOT = (
-    PROJECT_ROOT
-    / ".invoice_ai_cache"
-)
+RUNTIME_CACHE_ROOT = CACHE_ROOT / "production_runtime"
 
-
-MODEL_CACHE_ROOT = (
-    CACHE_ROOT
-    / "model"
-)
-
-
-RUNTIME_CACHE_ROOT = (
-    CACHE_ROOT
-    / "production_runtime"
-)
-
-
-COLAB_COMPAT_ROOT = (
-    CACHE_ROOT
-    / "colab_content"
-)
-
+COLAB_COMPAT_ROOT = CACHE_ROOT / "colab_content"
 
 RUNTIME_SIGNATURE_FILE = (
     RUNTIME_CACHE_ROOT
     / ".runtime_signature.json"
 )
 
-
 MODEL_ZIP_NAME = (
     "Invoice_AI_V3_AllRounder_FINAL.zip"
 )
 
-
 RUNTIME_ZIP_NAME = (
     "Invoice_AI_V3_FINAL_Production_Runtime.zip"
 )
-
 
 CANONICAL_RUNTIME_LOADER = (
     "load_v3_final_runtime.py"
@@ -136,10 +113,8 @@ def _find_artifact(
         / exact_name
     )
 
-
     if exact_path.is_file():
         return exact_path
-
 
     candidates = sorted(
         ARTIFACTS_DIR.glob(
@@ -147,25 +122,22 @@ def _find_artifact(
         )
     )
 
-
     if len(candidates) == 1:
         return candidates[0]
 
-
     if not candidates:
-
         raise FileNotFoundError(
             "Required artifact was not found.\n\n"
             f"Expected:\n{exact_path}"
         )
-
 
     raise RuntimeError(
         "Multiple matching artifact ZIPs were found.\n\n"
         +
         "\n".join(
             str(path)
-            for path in candidates
+            for path
+            in candidates
         )
     )
 
@@ -204,11 +176,9 @@ def _validate_zip_members(
             )
         )
 
-
         path = PurePosixPath(
             normalized
         )
-
 
         if (
             path.is_absolute()
@@ -232,10 +202,10 @@ def _extract_fresh(
         /
         (
             destination.name
-            + ".__extracting__"
+            +
+            ".__extracting__"
         )
     )
-
 
     if temporary.exists():
 
@@ -244,12 +214,10 @@ def _extract_fresh(
             ignore_errors=True,
         )
 
-
     temporary.mkdir(
         parents=True,
         exist_ok=True,
     )
-
 
     try:
 
@@ -262,11 +230,9 @@ def _extract_fresh(
                 archive
             )
 
-
             archive.extractall(
                 temporary
             )
-
 
         if destination.exists():
 
@@ -275,11 +241,9 @@ def _extract_fresh(
                 ignore_errors=True,
             )
 
-
         temporary.replace(
             destination
         )
-
 
     except Exception:
 
@@ -299,24 +263,19 @@ def _candidate_is_model(
     candidate: Path,
 ) -> bool:
 
-    config_file = (
+    if not (
         candidate
         / "config.json"
-    )
+    ).is_file():
 
-
-    if not config_file.is_file():
         return False
-
 
     return (
         (
             candidate
             / "model.safetensors"
         ).is_file()
-
         or
-
         (
             candidate
             / "pytorch_model.bin"
@@ -332,9 +291,7 @@ def find_model_directory() -> Path:
             "Model cache does not exist."
         )
 
-
     matches = []
-
 
     for config_file in (
         MODEL_CACHE_ROOT.rglob(
@@ -346,7 +303,6 @@ def find_model_directory() -> Path:
             config_file.parent
         )
 
-
         if _candidate_is_model(
             candidate
         ):
@@ -355,7 +311,6 @@ def find_model_directory() -> Path:
                 candidate
             )
 
-
     if not matches:
 
         raise RuntimeError(
@@ -363,7 +318,6 @@ def find_model_directory() -> Path:
             "config.json + model weights "
             "was found."
         )
-
 
     matches.sort(
         key=lambda path: (
@@ -376,46 +330,36 @@ def find_model_directory() -> Path:
         )
     )
 
-
     return matches[0]
 
 
 def prepare_model() -> Path:
 
     try:
-
-        return (
-            find_model_directory()
-        )
+        return find_model_directory()
 
     except (
         FileNotFoundError,
         RuntimeError,
     ):
-
         pass
-
 
     print(
         "\nExtracting Final V3 model..."
     )
-
 
     _extract_fresh(
         get_model_zip(),
         MODEL_CACHE_ROOT,
     )
 
-
     model_dir = (
         find_model_directory()
     )
 
-
     print(
         "✅ Model extraction complete"
     )
-
 
     return model_dir
 
@@ -431,30 +375,30 @@ def load_v3_model():
         prepare_model()
     )
 
-
     print(
         "\nLoading Final V3 model..."
     )
 
-
     processor = (
         LayoutLMv3Processor
         .from_pretrained(
-            str(model_dir),
+            str(
+                model_dir
+            ),
             apply_ocr=False,
             local_files_only=True,
         )
     )
 
-
     model = (
         LayoutLMv3ForTokenClassification
         .from_pretrained(
-            str(model_dir),
+            str(
+                model_dir
+            ),
             local_files_only=True,
         )
     )
-
 
     device = torch.device(
         "cuda:0"
@@ -462,21 +406,17 @@ def load_v3_model():
         else "cpu"
     )
 
-
     model.to(
         device
     )
 
-
     model.eval()
-
 
     parameter_count = sum(
         parameter.numel()
         for parameter
         in model.parameters()
     )
-
 
     if (
         model.__class__.__name__
@@ -489,7 +429,6 @@ def load_v3_model():
             f"Found: "
             f"{model.__class__.__name__}"
         )
-
 
     if (
         parameter_count
@@ -505,7 +444,6 @@ def load_v3_model():
             f"{parameter_count:,}"
         )
 
-
     if (
         model.config.num_labels
         !=
@@ -520,13 +458,11 @@ def load_v3_model():
             f"{model.config.num_labels}"
         )
 
-
     id2label = {
         int(key): value
         for key, value
         in model.config.id2label.items()
     }
-
 
     label_list = [
         id2label[index]
@@ -536,7 +472,6 @@ def load_v3_model():
         )
     ]
 
-
     if (
         label_list
         !=
@@ -545,9 +480,8 @@ def load_v3_model():
 
         raise RuntimeError(
             "Final V3 label order does not "
-            "match the expected schema."
+            "match expected schema."
         )
-
 
     label2id = {
         label: index
@@ -557,14 +491,11 @@ def load_v3_model():
         )
     }
 
-
     print(
         "✅ Final V3 model loaded"
     )
 
-
     return {
-
         "model":
             model,
 
@@ -593,7 +524,6 @@ def load_v3_model():
 
         "label2id":
             label2id,
-
     }
 
 
@@ -605,10 +535,7 @@ def _sha256(
     path: Path,
 ) -> str:
 
-    digest = (
-        hashlib.sha256()
-    )
-
+    digest = hashlib.sha256()
 
     with path.open(
         "rb"
@@ -617,22 +544,19 @@ def _sha256(
         while True:
 
             chunk = handle.read(
-                1024 * 1024
+                1024
+                *
+                1024
             )
-
 
             if not chunk:
                 break
-
 
             digest.update(
                 chunk
             )
 
-
-    return (
-        digest.hexdigest()
-    )
+    return digest.hexdigest()
 
 
 def _runtime_signature():
@@ -641,14 +565,9 @@ def _runtime_signature():
         get_runtime_zip()
     )
 
-
-    stat = (
-        runtime_zip.stat()
-    )
-
+    stat = runtime_zip.stat()
 
     return {
-
         "filename":
             runtime_zip.name,
 
@@ -659,19 +578,16 @@ def _runtime_signature():
             _sha256(
                 runtime_zip
             ),
-
     }
 
 
 def _read_runtime_signature():
 
     if not (
-        RUNTIME_SIGNATURE_FILE
-        .exists()
+        RUNTIME_SIGNATURE_FILE.exists()
     ):
 
         return None
-
 
     try:
 
@@ -692,14 +608,11 @@ def _write_runtime_signature(
 ):
 
     RUNTIME_SIGNATURE_FILE.write_text(
-
         json.dumps(
             signature,
             indent=2,
         ),
-
         encoding="utf-8",
-
     )
 
 
@@ -710,21 +623,18 @@ def _write_runtime_signature(
 def find_runtime_loader() -> Path:
 
     if not (
-        RUNTIME_CACHE_ROOT
-        .exists()
+        RUNTIME_CACHE_ROOT.exists()
     ):
 
         raise FileNotFoundError(
             "Runtime cache does not exist."
         )
 
-
     loaders = list(
         RUNTIME_CACHE_ROOT.rglob(
             CANONICAL_RUNTIME_LOADER
         )
     )
-
 
     if len(loaders) != 1:
 
@@ -733,7 +643,6 @@ def find_runtime_loader() -> Path:
             f"{CANONICAL_RUNTIME_LOADER}, "
             f"found {len(loaders)}."
         )
-
 
     return loaders[0]
 
@@ -746,9 +655,7 @@ def prepare_runtime(
         _runtime_signature()
     )
 
-
     cache_valid = False
-
 
     if (
         RUNTIME_CACHE_ROOT.exists()
@@ -762,7 +669,6 @@ def prepare_runtime(
                 find_runtime_loader()
             )
 
-
             cache_valid = (
                 loader.is_file()
                 and
@@ -771,11 +677,9 @@ def prepare_runtime(
                 signature
             )
 
-
         except Exception:
 
             cache_valid = False
-
 
     if not cache_valid:
 
@@ -784,54 +688,32 @@ def prepare_runtime(
             "production runtime..."
         )
 
-
         _extract_fresh(
             get_runtime_zip(),
             RUNTIME_CACHE_ROOT,
         )
 
-
         _write_runtime_signature(
             signature
         )
-
 
         print(
             "✅ Runtime extraction complete"
         )
 
-
-    return (
-        find_runtime_loader()
-    )
+    return find_runtime_loader()
 
 
 # ============================================================
-# EXACT COLAB -> STREAMLIT CLOUD FIX
+# COLAB PATH COMPATIBILITY
 # ============================================================
 
 def _patch_colab_runtime_paths():
-    """
-    The production runtime contains Google Colab paths.
-
-    IMPORTANT:
-    V6.1 loads executable source from the original .ipynb,
-    therefore patching only *.py files is NOT enough.
-
-    This patches:
-      *.py
-      *.ipynb
-      *.json
-
-    /content/... becomes:
-      .invoice_ai_cache/colab_content/...
-    """
 
     COLAB_COMPAT_ROOT.mkdir(
         parents=True,
         exist_ok=True,
     )
-
 
     replacement = (
         COLAB_COMPAT_ROOT
@@ -839,16 +721,13 @@ def _patch_colab_runtime_paths():
         .as_posix()
     )
 
-
     patchable_extensions = {
         ".py",
         ".ipynb",
         ".json",
     }
 
-
     patched_files = []
-
 
     for runtime_file in (
         RUNTIME_CACHE_ROOT.rglob(
@@ -859,14 +738,12 @@ def _patch_colab_runtime_paths():
         if not runtime_file.is_file():
             continue
 
-
         if (
             runtime_file.suffix.lower()
             not in patchable_extensions
         ):
 
             continue
-
 
         try:
 
@@ -876,7 +753,6 @@ def _patch_colab_runtime_paths():
                 )
             )
 
-
         except (
             UnicodeDecodeError,
             OSError,
@@ -884,44 +760,27 @@ def _patch_colab_runtime_paths():
 
             continue
 
-
         patched = source
-
-
-        # ----------------------------------------------------
-        # Normal Python / JSON strings
-        # ----------------------------------------------------
 
         patched = patched.replace(
             '"/content',
             f'"{replacement}',
         )
 
-
         patched = patched.replace(
             "'/content",
             f"'{replacement}",
         )
-
-
-        # ----------------------------------------------------
-        # Escaped strings inside .ipynb JSON
-        #
-        # Example:
-        #   Path(\"/content\")
-        # ----------------------------------------------------
 
         patched = patched.replace(
             '\\"/content',
             f'\\"{replacement}',
         )
 
-
         patched = patched.replace(
             "\\'/content",
             f"\\'{replacement}",
         )
-
 
         if patched != source:
 
@@ -930,22 +789,20 @@ def _patch_colab_runtime_paths():
                 encoding="utf-8",
             )
 
-
             patched_files.append(
                 runtime_file.name
             )
-
 
     print(
         "✅ Colab filesystem compatibility ready"
     )
 
-
     print(
         "Patched runtime files:",
-        len(patched_files),
+        len(
+            patched_files
+        ),
     )
-
 
     for filename in patched_files:
 
@@ -955,30 +812,25 @@ def _patch_colab_runtime_paths():
         )
 
 
-# ============================================================
-# RUNTIME /CONTENT SAFETY NET
-# ============================================================
-
 def _redirect_colab_path(
     value,
 ) -> Path:
 
     normalized = (
-        str(value)
+        str(
+            value
+        )
         .replace(
             "\\",
             "/",
         )
     )
 
-
     if (
         normalized
         ==
         "/content"
-
         or
-
         normalized.startswith(
             "/content/"
         )
@@ -986,17 +838,19 @@ def _redirect_colab_path(
 
         relative = (
             normalized[
-                len("/content"):
+                len(
+                    "/content"
+                ):
             ]
-            .lstrip("/")
+            .lstrip(
+                "/"
+            )
         )
-
 
         return (
             COLAB_COMPAT_ROOT
             / relative
         )
-
 
     return Path(
         value
@@ -1004,7 +858,7 @@ def _redirect_colab_path(
 
 
 # ============================================================
-# LEGACY SOURCE RESOLUTION
+# RUNTIME SOURCE RESOLUTION
 # ============================================================
 
 def _suffix_match_score(
@@ -1018,35 +872,27 @@ def _suffix_match_score(
         in requested.parts
     ]
 
-
     candidate_parts = [
         part.lower()
         for part
         in candidate.parts
     ]
 
-
     score = 0
 
-
     for left, right in zip(
-
         reversed(
             requested_parts
         ),
-
         reversed(
             candidate_parts
         ),
-
     ):
 
         if left != right:
             break
 
-
         score += 1
-
 
     return score
 
@@ -1062,56 +908,46 @@ def _resolve_runtime_source(
         )
     )
 
-
     if redirected.exists():
-
         return redirected
-
 
     original = Path(
         source
     )
 
-
     if not original.is_absolute():
 
         possibilities = [
-
             runtime_loader.parent
-            / original,
+            /
+            original,
 
             RUNTIME_CACHE_ROOT
-            / original,
+            /
+            original,
 
             PROJECT_ROOT
-            / original,
+            /
+            original,
 
             COLAB_COMPAT_ROOT
-            / original,
-
+            /
+            original,
         ]
-
 
         for candidate in possibilities:
 
             if candidate.exists():
-
                 return candidate
 
-
     matches = [
-
         candidate
-
         for candidate
         in RUNTIME_CACHE_ROOT.rglob(
             original.name
         )
-
         if candidate.is_file()
-
     ]
-
 
     if not matches:
 
@@ -1123,26 +959,20 @@ def _resolve_runtime_source(
             f"{RUNTIME_CACHE_ROOT}"
         )
 
-
     matches.sort(
         key=lambda candidate: (
-
             -_suffix_match_score(
                 original,
                 candidate,
             ),
-
             len(
                 candidate.parts
             ),
-
             str(
                 candidate
             ).lower(),
-
         )
     )
-
 
     if len(matches) > 1:
 
@@ -1153,7 +983,6 @@ def _resolve_runtime_source(
             )
         )
 
-
         second_score = (
             _suffix_match_score(
                 original,
@@ -1161,12 +990,7 @@ def _resolve_runtime_source(
             )
         )
 
-
-        if (
-            first_score
-            ==
-            second_score
-        ):
+        if first_score == second_score:
 
             raise RuntimeError(
                 "Ambiguous runtime source path.\n\n"
@@ -1179,7 +1003,6 @@ def _resolve_runtime_source(
                     in matches
                 )
             )
-
 
     return matches[0]
 
@@ -1207,13 +1030,11 @@ def _build_safe_copy2(
             )
         )
 
-
         destination_path = (
             _redirect_colab_path(
                 destination
             )
         )
-
 
         if (
             destination_path.exists()
@@ -1233,44 +1054,16 @@ def _build_safe_copy2(
                 exist_ok=True,
             )
 
-
-        try:
-
-            final_destination = (
-                destination_path
-                / source_path.name
-
-                if destination_path.is_dir()
-
-                else destination_path
-            )
-
-
-            if (
-                final_destination.exists()
-                and
-                source_path.resolve()
-                ==
-                final_destination.resolve()
-            ):
-
-                return str(
-                    final_destination
-                )
-
-
-        except Exception:
-
-            pass
-
-
         return original_copy2(
-            str(source_path),
-            str(destination_path),
+            str(
+                source_path
+            ),
+            str(
+                destination_path
+            ),
             follow_symlinks=
                 follow_symlinks,
         )
-
 
     return safe_copy2
 
@@ -1294,13 +1087,11 @@ def _build_safe_copy(
             )
         )
 
-
         destination_path = (
             _redirect_colab_path(
                 destination
             )
         )
-
 
         if (
             destination_path.exists()
@@ -1320,14 +1111,16 @@ def _build_safe_copy(
                 exist_ok=True,
             )
 
-
         return original_copy(
-            str(source_path),
-            str(destination_path),
+            str(
+                source_path
+            ),
+            str(
+                destination_path
+            ),
             follow_symlinks=
                 follow_symlinks,
         )
-
 
     return safe_copy
 
@@ -1351,33 +1144,33 @@ def _build_safe_copyfile(
             )
         )
 
-
         destination_path = (
             _redirect_colab_path(
                 destination
             )
         )
 
-
         destination_path.parent.mkdir(
             parents=True,
             exist_ok=True,
         )
 
-
         return original_copyfile(
-            str(source_path),
-            str(destination_path),
+            str(
+                source_path
+            ),
+            str(
+                destination_path
+            ),
             follow_symlinks=
                 follow_symlinks,
         )
-
 
     return safe_copyfile
 
 
 # ============================================================
-# COMPLETE PRODUCTION ENGINE
+# COMPLETE V3/V6.1 PRODUCTION ENGINE
 # ============================================================
 
 @lru_cache(maxsize=2)
@@ -1385,18 +1178,9 @@ def load_v3_production_engine(
     force_runtime_refresh=False,
 ):
 
-    # ========================================================
-    # LOAD VERIFIED MODEL
-    # ========================================================
-
     engine = (
         load_v3_model()
     )
-
-
-    # ========================================================
-    # EXTRACT / VERIFY RUNTIME
-    # ========================================================
 
     runtime_loader = (
         prepare_runtime(
@@ -1405,31 +1189,17 @@ def load_v3_production_engine(
         )
     )
 
-
-    # ========================================================
-    # CRITICAL:
-    # PATCH .PY + .IPYNB + .JSON BEFORE EXECUTION
-    # ========================================================
-
     _patch_colab_runtime_paths()
-
 
     print(
         "\nRuntime loader:"
     )
 
-
     print(
         runtime_loader
     )
 
-
-    # ========================================================
-    # VARIABLES EXPECTED BY PRODUCTION RUNTIME
-    # ========================================================
-
     runtime_namespace = {
-
         "__name__":
             "invoice_ai_v3_production_runtime",
 
@@ -1441,31 +1211,45 @@ def load_v3_production_engine(
         "__builtins__":
             __builtins__,
 
-
         "model":
-            engine["model"],
+            engine[
+                "model"
+            ],
 
         "processor":
-            engine["processor"],
+            engine[
+                "processor"
+            ],
 
         "device":
-            engine["device"],
+            engine[
+                "device"
+            ],
 
         "id2label":
-            engine["id2label"],
+            engine[
+                "id2label"
+            ],
 
         "label2id":
-            engine["label2id"],
-
+            engine[
+                "label2id"
+            ],
 
         "MODEL":
-            engine["model"],
+            engine[
+                "model"
+            ],
 
         "PROCESSOR":
-            engine["processor"],
+            engine[
+                "processor"
+            ],
 
         "DEVICE":
-            engine["device"],
+            engine[
+                "device"
+            ],
 
         "TARGET_FIELDS":
             list(
@@ -1478,18 +1262,20 @@ def load_v3_production_engine(
             ),
 
         "MODEL_ID2LABEL":
-            engine["id2label"],
+            engine[
+                "id2label"
+            ],
 
         "LABEL_LIST":
-            engine["label_list"],
+            engine[
+                "label_list"
+            ],
 
         "PARAMETERS":
             engine[
                 "parameter_count"
             ],
-
     }
-
 
     runtime_source = (
         runtime_loader.read_text(
@@ -1497,51 +1283,24 @@ def load_v3_production_engine(
         )
     )
 
-
-    # ========================================================
-    # ALLOW RUNTIME SIBLING IMPORTS
-    # ========================================================
-
     runtime_directory = str(
         runtime_loader.parent
     )
 
-
     inserted_runtime_path = False
 
-
-    if (
-        runtime_directory
-        not in sys.path
-    ):
+    if runtime_directory not in sys.path:
 
         sys.path.insert(
             0,
             runtime_directory,
         )
 
-
         inserted_runtime_path = True
 
-
-    # ========================================================
-    # TEMPORARY SHUTIL COMPATIBILITY
-    # ========================================================
-
-    original_copy2 = (
-        shutil.copy2
-    )
-
-
-    original_copy = (
-        shutil.copy
-    )
-
-
-    original_copyfile = (
-        shutil.copyfile
-    )
-
+    original_copy2 = shutil.copy2
+    original_copy = shutil.copy
+    original_copyfile = shutil.copyfile
 
     shutil.copy2 = (
         _build_safe_copy2(
@@ -1550,14 +1309,12 @@ def load_v3_production_engine(
         )
     )
 
-
     shutil.copy = (
         _build_safe_copy(
             runtime_loader,
             original_copy,
         )
     )
-
 
     shutil.copyfile = (
         _build_safe_copyfile(
@@ -1566,11 +1323,9 @@ def load_v3_production_engine(
         )
     )
 
-
     print(
         "\nLoading production runtime..."
     )
-
 
     try:
 
@@ -1586,23 +1341,11 @@ def load_v3_production_engine(
             runtime_namespace,
         )
 
-
     finally:
 
-        shutil.copy2 = (
-            original_copy2
-        )
-
-
-        shutil.copy = (
-            original_copy
-        )
-
-
-        shutil.copyfile = (
-            original_copyfile
-        )
-
+        shutil.copy2 = original_copy2
+        shutil.copy = original_copy
+        shutil.copyfile = original_copyfile
 
         if inserted_runtime_path:
 
@@ -1612,22 +1355,15 @@ def load_v3_production_engine(
                     runtime_directory
                 )
 
-
             except ValueError:
 
                 pass
-
-
-    # ========================================================
-    # FINAL CONTRACT
-    # ========================================================
 
     process_invoice_final = (
         runtime_namespace.get(
             "process_invoice_final"
         )
     )
-
 
     if not callable(
         process_invoice_final
@@ -1639,69 +1375,3576 @@ def load_v3_production_engine(
             "was not created."
         )
 
-
     print(
         "✅ Production runtime loaded"
     )
 
-
     return {
-
         **engine,
-
 
         "runtime_loader":
             runtime_loader,
 
-
         "runtime_namespace":
             runtime_namespace,
-
 
         "process_invoice_final":
             process_invoice_final,
 
-
         "runtime_ready":
             True,
 
-
         "colab_compat_root":
             COLAB_COMPAT_ROOT,
-
     }
 
 
 # ============================================================
-# VERIFY MODEL
+# DYNAMIC PARAMETER EXTRACTION
+# ============================================================
+
+DYNAMIC_NOT_DETECTED = (
+    "NOT_DETECTED"
+)
+
+DYNAMIC_MIN_CONFIDENCE = (
+    0.60
+)
+
+DYNAMIC_MAX_FIELDS = (
+    50
+)
+
+DYNAMIC_MAX_VALUE_LENGTH = (
+    220
+)
+
+
+_DYNAMIC_STOPWORDS = {
+    "the",
+    "a",
+    "an",
+    "of",
+    "for",
+    "to",
+    "from",
+    "field",
+    "value",
+    "details",
+    "detail",
+}
+
+
+_DYNAMIC_GENERIC_TOKENS = {
+    "number",
+    "no",
+    "num",
+    "nr",
+    "id",
+    "identifier",
+    "code",
+    "reference",
+    "ref",
+    "value",
+    "detail",
+    "details",
+}
+
+
+_DYNAMIC_EQUIVALENTS = {
+
+    "number": {
+        "number",
+        "no",
+        "num",
+        "nr",
+    },
+
+    "no": {
+        "no",
+        "number",
+        "num",
+        "nr",
+    },
+
+    "reference": {
+        "reference",
+        "ref",
+    },
+
+    "ref": {
+        "ref",
+        "reference",
+    },
+
+    "identifier": {
+        "identifier",
+        "id",
+    },
+
+    "id": {
+        "id",
+        "identifier",
+    },
+
+    "purchase": {
+        "purchase",
+        "po",
+    },
+
+    "order": {
+        "order",
+        "po",
+    },
+
+    "account": {
+        "account",
+        "acct",
+        "ac",
+    },
+
+    "quantity": {
+        "quantity",
+        "qty",
+    },
+
+    "amount": {
+        "amount",
+        "amt",
+        "value",
+    },
+
+    "phone": {
+        "phone",
+        "mobile",
+        "telephone",
+        "tel",
+    },
+
+    "date": {
+        "date",
+        "dated",
+    },
+
+    "hsn": {
+        "hsn",
+        "sac",
+    },
+}
+
+
+_DYNAMIC_SPECIAL_VARIANTS = {
+
+    "gstin": {
+        "gstin",
+        "gst no",
+        "gst number",
+        "gst registration number",
+        "gst registration no",
+    },
+
+    "ifsc": {
+        "ifsc",
+        "ifsc code",
+    },
+
+    "ifsc code": {
+        "ifsc",
+        "ifsc code",
+    },
+
+    "pan": {
+        "pan",
+        "pan no",
+        "pan number",
+    },
+
+    "hsn code": {
+        "hsn code",
+        "hsn",
+        "hsn sac",
+        "hsn / sac",
+        "sac code",
+    },
+
+    "purchase order": {
+        "purchase order",
+        "po",
+        "p o",
+    },
+
+    "purchase order number": {
+        "purchase order number",
+        "purchase order no",
+        "po number",
+        "po no",
+        "p o number",
+        "p o no",
+    },
+
+    "po number": {
+        "po number",
+        "po no",
+        "p o number",
+        "p o no",
+        "purchase order number",
+        "purchase order no",
+    },
+
+    "gr number": {
+        "gr number",
+        "gr no",
+        "goods receipt number",
+        "goods receipt no",
+    },
+
+    "bank account number": {
+        "bank account number",
+        "bank account no",
+        "account number",
+        "account no",
+        "acct no",
+        "ac no",
+    },
+
+    "vehicle number": {
+        "vehicle number",
+        "vehicle no",
+        "vehicle registration",
+        "vehicle registration no",
+        "vehicle reg no",
+    },
+
+    "delivery challan number": {
+        "delivery challan number",
+        "delivery challan no",
+        "challan number",
+        "challan no",
+        "dc no",
+    },
+
+    "b value": {
+        "b value",
+        "bvalue",
+    },
+}
+
+
+_DYNAMIC_REQUIRED_SEMANTIC_GROUPS = {
+
+    "gstin": (
+        {
+            "gstin",
+            "gst",
+        },
+    ),
+
+    "ifsc": (
+        {
+            "ifsc",
+        },
+    ),
+
+    "ifsc code": (
+        {
+            "ifsc",
+        },
+    ),
+
+    "pan": (
+        {
+            "pan",
+        },
+    ),
+
+    "hsn code": (
+        {
+            "hsn",
+            "sac",
+        },
+    ),
+
+    "purchase order": (
+        {
+            "purchase",
+            "po",
+        },
+        {
+            "order",
+            "po",
+        },
+    ),
+
+    "purchase order number": (
+        {
+            "purchase",
+            "po",
+        },
+        {
+            "order",
+            "po",
+        },
+    ),
+
+    "po number": (
+        {
+            "po",
+            "purchase",
+        },
+    ),
+
+    "gr number": (
+        {
+            "gr",
+            "goods",
+        },
+    ),
+
+    "bank account number": (
+        {
+            "bank",
+            "account",
+            "acct",
+            "ac",
+        },
+    ),
+
+    "vehicle number": (
+        {
+            "vehicle",
+            "registration",
+            "reg",
+        },
+    ),
+
+    "delivery challan number": (
+        {
+            "challan",
+            "dc",
+        },
+    ),
+
+    "b value": (
+        {
+            "b",
+            "bvalue",
+        },
+    ),
+}
+
+
+# ============================================================
+# PATTERNS
+# ============================================================
+
+_DYNAMIC_GSTIN_PATTERN = re.compile(
+    r"(?<![A-Z0-9])"
+    r"[0-9]{2}"
+    r"[A-Z]{5}"
+    r"[0-9]{4}"
+    r"[A-Z]"
+    r"[1-9A-Z]"
+    r"Z"
+    r"[0-9A-Z]"
+    r"(?![A-Z0-9])",
+    re.IGNORECASE,
+)
+
+
+_DYNAMIC_IFSC_PATTERN = re.compile(
+    r"(?<![A-Z0-9])"
+    r"[A-Z]{4}"
+    r"0"
+    r"[A-Z0-9]{6}"
+    r"(?![A-Z0-9])",
+    re.IGNORECASE,
+)
+
+
+_DYNAMIC_PAN_PATTERN = re.compile(
+    r"(?<![A-Z0-9])"
+    r"[A-Z]{5}"
+    r"[0-9]{4}"
+    r"[A-Z]"
+    r"(?![A-Z0-9])",
+    re.IGNORECASE,
+)
+
+
+_DYNAMIC_HSN_PATTERN = re.compile(
+    r"(?<!\d)"
+    r"\d{4,8}"
+    r"(?!\d)"
+)
+
+
+_DYNAMIC_EMAIL_PATTERN = re.compile(
+    r"\b"
+    r"[A-Z0-9._%+\-]+"
+    r"@"
+    r"[A-Z0-9.\-]+"
+    r"\."
+    r"[A-Z]{2,}"
+    r"\b",
+    re.IGNORECASE,
+)
+
+
+_DYNAMIC_DATE_PATTERN = re.compile(
+    r"\b(?:"
+    r"\d{1,2}[./\-]\d{1,2}[./\-]\d{2,4}"
+    r"|"
+    r"\d{4}[./\-]\d{1,2}[./\-]\d{1,2}"
+    r")\b"
+)
+
+
+_DYNAMIC_PHONE_PATTERN = re.compile(
+    r"(?<!\d)"
+    r"(?:\+?\d{1,3}[\s\-]?)?"
+    r"(?:\d[\s\-]?){8,12}"
+    r"(?!\d)"
+)
+
+
+_DYNAMIC_AMOUNT_PATTERN = re.compile(
+    r"(?<!\w)"
+    r"(?:₹|Rs\.?|INR|\$|USD|€|EUR|£|GBP)?"
+    r"\s*"
+    r"[-+]?"
+    r"\d[\d,]*"
+    r"(?:\.\d{1,4})?"
+    r"(?!\w)",
+    re.IGNORECASE,
+)
+
+
+_DYNAMIC_PERCENT_PATTERN = re.compile(
+    r"(?<!\w)"
+    r"[-+]?"
+    r"\d+(?:\.\d+)?"
+    r"\s*%"
+    r"(?!\w)"
+)
+
+
+_DYNAMIC_IDENTIFIER_PATTERN = re.compile(
+    r"(?<![A-Za-z0-9])"
+    r"[A-Za-z0-9]"
+    r"[A-Za-z0-9./_\-]{1,39}"
+    r"(?![A-Za-z0-9])"
+)
+
+
+# ============================================================
+# ACRONYM NORMALIZATION
+# ============================================================
+
+def _collapse_dotted_acronyms(
+    text: str,
+) -> str:
+
+    pattern = re.compile(
+        r"(?i)"
+        r"\b"
+        r"(?:"
+        r"[a-z]"
+        r"\s*\.\s*"
+        r"){1,5}"
+        r"[a-z]"
+        r"(?:\s*\.)?"
+        r"(?![a-z])"
+    )
+
+    def replace(
+        match,
+    ):
+
+        return re.sub(
+            r"[^A-Za-z]",
+            "",
+            match.group(
+                0
+            ),
+        )
+
+    return pattern.sub(
+        replace,
+        text,
+    )
+
+
+def _collapse_common_spaced_acronyms(
+    text: str,
+) -> str:
+
+    replacements = [
+
+        (
+            r"(?i)\bP\s+O\b",
+            "PO",
+        ),
+
+        (
+            r"(?i)\bG\s+R\b",
+            "GR",
+        ),
+
+        (
+            r"(?i)\bI\s+F\s+S\s+C\b",
+            "IFSC",
+        ),
+
+        (
+            r"(?i)\bG\s+S\s+T\s+I\s+N\b",
+            "GSTIN",
+        ),
+
+        (
+            r"(?i)\bG\s+S\s+T\b",
+            "GST",
+        ),
+
+        (
+            r"(?i)\bD\s+C\b",
+            "DC",
+        ),
+
+        (
+            r"(?i)\bA\s+C\b",
+            "AC",
+        ),
+    ]
+
+    for (
+        pattern,
+        replacement,
+    ) in replacements:
+
+        text = re.sub(
+            pattern,
+            replacement,
+            text,
+        )
+
+    return text
+
+
+def _dynamic_pre_normalize(
+    value: Any,
+) -> str:
+
+    if value is None:
+        return ""
+
+    text = unicodedata.normalize(
+        "NFKC",
+        str(
+            value
+        ),
+    )
+
+    text = (
+        _collapse_dotted_acronyms(
+            text
+        )
+    )
+
+    text = (
+        _collapse_common_spaced_acronyms(
+            text
+        )
+    )
+
+    return text
+
+
+# ============================================================
+# NORMALIZATION
+# ============================================================
+
+def _dynamic_normalize_text(
+    value: Any,
+) -> str:
+
+    text = (
+        _dynamic_pre_normalize(
+            value
+        )
+    )
+
+    if not text:
+        return ""
+
+    text = text.lower()
+
+    text = text.replace(
+        "&",
+        " and ",
+    )
+
+    text = text.replace(
+        "_",
+        " ",
+    )
+
+    text = text.replace(
+        "-",
+        " ",
+    )
+
+    text = re.sub(
+        r"[^a-z0-9+#/ ]+",
+        " ",
+        text,
+    )
+
+    text = re.sub(
+        r"\s+",
+        " ",
+        text,
+    )
+
+    return text.strip()
+
+
+def _dynamic_clean_value(
+    value: Any,
+) -> str:
+
+    if value is None:
+        return ""
+
+    text = unicodedata.normalize(
+        "NFKC",
+        str(
+            value
+        ),
+    )
+
+    text = text.strip()
+
+    text = re.sub(
+        r"^[\s:;=|\-–—#]+",
+        "",
+        text,
+    )
+
+    text = re.sub(
+        r"[\s:;=|\-–—]+$",
+        "",
+        text,
+    )
+
+    text = re.sub(
+        r"\s+",
+        " ",
+        text,
+    )
+
+    return text.strip()
+
+
+def _dynamic_query_tokens(
+    field_name: str,
+):
+
+    normalized = (
+        _dynamic_normalize_text(
+            field_name
+        )
+    )
+
+    return [
+        token
+        for token
+        in normalized.split()
+        if token
+        not in
+        _DYNAMIC_STOPWORDS
+    ]
+
+
+# ============================================================
+# FIELD VARIANTS
+# ============================================================
+
+def _dynamic_field_variants(
+    field_name: str,
+):
+
+    normalized = (
+        _dynamic_normalize_text(
+            field_name
+        )
+    )
+
+    if not normalized:
+        return []
+
+    variants = {
+        normalized
+    }
+
+    for (
+        special_name,
+        special_variants,
+    ) in (
+        _DYNAMIC_SPECIAL_VARIANTS.items()
+    ):
+
+        normalized_special = (
+            _dynamic_normalize_text(
+                special_name
+            )
+        )
+
+        normalized_aliases = {
+            _dynamic_normalize_text(
+                item
+            )
+            for item
+            in special_variants
+        }
+
+        if (
+            normalized
+            ==
+            normalized_special
+            or
+            normalized
+            in
+            normalized_aliases
+            or
+            normalized_special
+            in
+            normalized
+        ):
+
+            variants.update(
+                normalized_aliases
+            )
+
+    tokens = (
+        normalized.split()
+    )
+
+    for index, token in enumerate(
+        tokens
+    ):
+
+        alternatives = (
+            _DYNAMIC_EQUIVALENTS.get(
+                token,
+                set(),
+            )
+        )
+
+        for alternative in alternatives:
+
+            changed = list(
+                tokens
+            )
+
+            changed[
+                index
+            ] = alternative
+
+            variants.add(
+                " ".join(
+                    changed
+                )
+            )
+
+    return sorted(
+        {
+            _dynamic_normalize_text(
+                item
+            )
+            for item
+            in variants
+            if item
+        },
+        key=len,
+        reverse=True,
+    )
+
+
+# ============================================================
+# FIELD TYPE
+# ============================================================
+
+def _dynamic_parameter_type(
+    field_name: str,
+):
+
+    name = (
+        _dynamic_normalize_text(
+            field_name
+        )
+    )
+
+    tokens = set(
+        name.split()
+    )
+
+    if (
+        "gstin"
+        in tokens
+        or
+        name
+        in {
+            "gst no",
+            "gst number",
+        }
+    ):
+
+        return "gstin"
+
+    if "ifsc" in tokens:
+        return "ifsc"
+
+    if (
+        "pan"
+        in tokens
+        and
+        len(tokens)
+        <=
+        4
+    ):
+
+        return "pan"
+
+    if (
+        "hsn"
+        in tokens
+        or
+        (
+            "sac"
+            in tokens
+            and
+            "code"
+            in tokens
+        )
+    ):
+
+        return "hsn"
+
+    if "email" in tokens:
+        return "email"
+
+    if (
+        "date"
+        in tokens
+        or
+        "dated"
+        in tokens
+    ):
+
+        return "date"
+
+    if tokens.intersection(
+        {
+            "phone",
+            "mobile",
+            "telephone",
+            "tel",
+        }
+    ):
+
+        return "phone"
+
+    if tokens.intersection(
+        {
+            "amount",
+            "total",
+            "value",
+            "balance",
+            "subtotal",
+        }
+    ):
+
+        return "amount"
+
+    if tokens.intersection(
+        {
+            "percentage",
+            "percent",
+        }
+    ):
+
+        return "percent"
+
+    if tokens.intersection(
+        {
+            "quantity",
+            "qty",
+        }
+    ):
+
+        return "quantity"
+
+    if tokens.intersection(
+        {
+            "number",
+            "no",
+            "num",
+            "id",
+            "identifier",
+            "reference",
+            "ref",
+            "code",
+        }
+    ):
+
+        return "identifier"
+
+    return "generic"
+
+
+def _dynamic_pattern_for_type(
+    field_type: str,
+):
+
+    return {
+        "gstin":
+            _DYNAMIC_GSTIN_PATTERN,
+
+        "ifsc":
+            _DYNAMIC_IFSC_PATTERN,
+
+        "pan":
+            _DYNAMIC_PAN_PATTERN,
+
+        "hsn":
+            _DYNAMIC_HSN_PATTERN,
+
+        "email":
+            _DYNAMIC_EMAIL_PATTERN,
+
+        "date":
+            _DYNAMIC_DATE_PATTERN,
+
+        "phone":
+            _DYNAMIC_PHONE_PATTERN,
+
+        "amount":
+            _DYNAMIC_AMOUNT_PATTERN,
+
+        "percent":
+            _DYNAMIC_PERCENT_PATTERN,
+
+    }.get(
+        field_type
+    )
+
+
+# ============================================================
+# SEMANTIC ANCHOR PROTECTION
+# ============================================================
+
+def _dynamic_required_semantic_groups(
+    field_name: str,
+):
+
+    normalized = (
+        _dynamic_normalize_text(
+            field_name
+        )
+    )
+
+    for (
+        key,
+        groups,
+    ) in (
+        _DYNAMIC_REQUIRED_SEMANTIC_GROUPS.items()
+    ):
+
+        normalized_key = (
+            _dynamic_normalize_text(
+                key
+            )
+        )
+
+        if (
+            normalized
+            ==
+            normalized_key
+            or
+            normalized_key
+            in
+            normalized
+        ):
+
+            return groups
+
+    semantic_tokens = [
+        token
+        for token
+        in
+        _dynamic_query_tokens(
+            field_name
+        )
+        if token
+        not in
+        _DYNAMIC_GENERIC_TOKENS
+    ]
+
+    if not semantic_tokens:
+        return tuple()
+
+    groups = []
+
+    for token in semantic_tokens:
+
+        equivalents = set(
+            _DYNAMIC_EQUIVALENTS.get(
+                token,
+                set(),
+            )
+        )
+
+        equivalents.add(
+            token
+        )
+
+        groups.append(
+            equivalents
+        )
+
+    return tuple(
+        groups
+    )
+
+
+def _dynamic_semantic_anchor_ok(
+    field_name: str,
+    line_text: str,
+) -> bool:
+
+    groups = (
+        _dynamic_required_semantic_groups(
+            field_name
+        )
+    )
+
+    if not groups:
+        return True
+
+    line_tokens = set(
+        _dynamic_normalize_text(
+            line_text
+        ).split()
+    )
+
+    if not line_tokens:
+        return False
+
+    for group in groups:
+
+        normalized_group = {
+            _dynamic_normalize_text(
+                token
+            )
+            for token
+            in group
+        }
+
+        if not (
+            line_tokens
+            .intersection(
+                normalized_group
+            )
+        ):
+
+            return False
+
+    return True
+
+
+# ============================================================
+# VALUE BOUNDARY DETECTION
+# ============================================================
+
+def _dynamic_trim_at_next_label(
+    candidate: str,
+):
+
+    text = (
+        _dynamic_clean_value(
+            candidate
+        )
+    )
+
+    if not text:
+        return ""
+
+    patterns = [
+
+        r"\s+(?=[A-Za-z]{1,15}\s+No\.?\s*[:=])",
+
+        r"\s+(?=[A-Za-z]{1,15}\s+Number\s*[:=])",
+
+        r"\s+(?=[A-Za-z]{1,15}\.?\s*Value\s*[:=])",
+
+        r"\s+(?=[A-Za-z]{1,20}\s+Code\s*[:=])",
+
+        r"\s+(?=[A-Za-z]{1,20}\s+Date\s*[:=])",
+
+        r"\s+(?=[A-Za-z]{1,20}\s+Amount\s*[:=])",
+
+        r"\s+(?=[A-Za-z]{1,20}\s+Rate\s*[:=])",
+
+        r"\s+(?=[A-Za-z]{1,20}\s*[:=])",
+    ]
+
+    earliest = None
+
+    for pattern in patterns:
+
+        match = re.search(
+            pattern,
+            text,
+            flags=re.IGNORECASE,
+        )
+
+        if match:
+
+            if (
+                earliest is None
+                or
+                match.start()
+                <
+                earliest
+            ):
+
+                earliest = (
+                    match.start()
+                )
+
+    if earliest is not None:
+
+        text = text[
+            :
+            earliest
+        ]
+
+    return (
+        _dynamic_clean_value(
+            text
+        )
+    )
+
+
+def _dynamic_extract_identifier(
+    candidate: str,
+):
+
+    candidate = (
+        _dynamic_trim_at_next_label(
+            candidate
+        )
+    )
+
+    if not candidate:
+        return ""
+
+    matches = list(
+        _DYNAMIC_IDENTIFIER_PATTERN
+        .finditer(
+            candidate
+        )
+    )
+
+    for match in matches:
+
+        token = (
+            match.group(
+                0
+            )
+            .strip(
+                ".,;:"
+            )
+        )
+
+        if not token:
+            continue
+
+        if not any(
+            character.isdigit()
+            for character
+            in token
+        ):
+
+            continue
+
+        if len(token) > 40:
+            continue
+
+        return token
+
+    pieces = (
+        candidate.split()
+    )
+
+    if not pieces:
+        return ""
+
+    return (
+        _dynamic_clean_value(
+            pieces[0]
+        )
+    )
+
+
+def _dynamic_extract_typed_value(
+    field_type: str,
+    candidate: str,
+):
+
+    cleaned = (
+        _dynamic_trim_at_next_label(
+            candidate
+        )
+    )
+
+    if not cleaned:
+        return ""
+
+    pattern = (
+        _dynamic_pattern_for_type(
+            field_type
+        )
+    )
+
+    if pattern is not None:
+
+        match = (
+            pattern.search(
+                cleaned
+            )
+        )
+
+        if match:
+
+            return (
+                _dynamic_clean_value(
+                    match.group(
+                        0
+                    )
+                )
+            )
+
+    if field_type == "identifier":
+
+        return (
+            _dynamic_extract_identifier(
+                cleaned
+            )
+        )
+
+    return (
+        cleaned[
+            :
+            DYNAMIC_MAX_VALUE_LENGTH
+        ]
+    )
+
+
+def _dynamic_pattern_score(
+    field_type: str,
+    candidate: str,
+):
+
+    if not candidate:
+        return -0.25
+
+    pattern = (
+        _dynamic_pattern_for_type(
+            field_type
+        )
+    )
+
+    if pattern is None:
+        return 0.0
+
+    if pattern.search(
+        candidate
+    ):
+
+        if (
+            field_type
+            in {
+                "gstin",
+                "ifsc",
+                "pan",
+                "email",
+            }
+        ):
+
+            return 0.30
+
+        if field_type == "hsn":
+            return 0.26
+
+        return 0.18
+
+    if (
+        field_type
+        in {
+            "gstin",
+            "ifsc",
+            "pan",
+            "email",
+            "hsn",
+        }
+    ):
+
+        return -0.30
+
+    return -0.08
+
+
+# ============================================================
+# NATIVE PDF TEXT + GEOMETRY
+# ============================================================
+
+def _dynamic_pdf_lines(
+    input_path,
+):
+
+    if pymupdf is None:
+        return []
+
+    path = Path(
+        input_path
+    )
+
+    if (
+        not path.is_file()
+        or
+        path.suffix.lower()
+        !=
+        ".pdf"
+    ):
+
+        return []
+
+    lines = []
+
+    document = pymupdf.open(
+        str(
+            path
+        )
+    )
+
+    try:
+
+        for page_index in range(
+            document.page_count
+        ):
+
+            page = (
+                document.load_page(
+                    page_index
+                )
+            )
+
+            words = (
+                page.get_text(
+                    "words"
+                )
+            )
+
+            grouped = {}
+
+            for word in words:
+
+                if len(word) < 8:
+                    continue
+
+                (
+                    x0,
+                    y0,
+                    x1,
+                    y1,
+                    text,
+                    block_number,
+                    line_number,
+                    word_number,
+                ) = word[:8]
+
+                text = (
+                    str(
+                        text
+                    )
+                    .strip()
+                )
+
+                if not text:
+                    continue
+
+                key = (
+                    int(
+                        block_number
+                    ),
+                    int(
+                        line_number
+                    ),
+                )
+
+                grouped.setdefault(
+                    key,
+                    [],
+                ).append(
+                    {
+                        "x0":
+                            float(
+                                x0
+                            ),
+
+                        "y0":
+                            float(
+                                y0
+                            ),
+
+                        "x1":
+                            float(
+                                x1
+                            ),
+
+                        "y1":
+                            float(
+                                y1
+                            ),
+
+                        "text":
+                            text,
+
+                        "word_number":
+                            int(
+                                word_number
+                            ),
+                    }
+                )
+
+            page_lines = []
+
+            for values in (
+                grouped.values()
+            ):
+
+                values.sort(
+                    key=lambda item: (
+                        item[
+                            "word_number"
+                        ],
+                        item[
+                            "x0"
+                        ],
+                    )
+                )
+
+                text = " ".join(
+                    item[
+                        "text"
+                    ]
+                    for item
+                    in values
+                ).strip()
+
+                if not text:
+                    continue
+
+                page_lines.append(
+                    {
+                        "page":
+                            page_index
+                            +
+                            1,
+
+                        "text":
+                            text,
+
+                        "x0":
+                            min(
+                                item[
+                                    "x0"
+                                ]
+                                for item
+                                in values
+                            ),
+
+                        "y0":
+                            min(
+                                item[
+                                    "y0"
+                                ]
+                                for item
+                                in values
+                            ),
+
+                        "x1":
+                            max(
+                                item[
+                                    "x1"
+                                ]
+                                for item
+                                in values
+                            ),
+
+                        "y1":
+                            max(
+                                item[
+                                    "y1"
+                                ]
+                                for item
+                                in values
+                            ),
+
+                        "source":
+                            "NATIVE_PDF",
+                    }
+                )
+
+            page_lines.sort(
+                key=lambda item: (
+                    round(
+                        item[
+                            "y0"
+                        ],
+                        1,
+                    ),
+                    item[
+                        "x0"
+                    ],
+                )
+            )
+
+            lines.extend(
+                page_lines
+            )
+
+    finally:
+
+        document.close()
+
+    return lines
+
+
+# ============================================================
+# PRODUCTION RESULT EVIDENCE
+# ============================================================
+
+def _dynamic_collect_result_text(
+    payload,
+):
+
+    collected = []
+
+    ignored_keys = {
+        "confidence",
+        "score",
+        "source",
+        "start_word_index",
+        "end_word_index",
+        "bbox",
+        "boxes",
+    }
+
+    def walk(
+        node,
+    ):
+
+        if isinstance(
+            node,
+            dict,
+        ):
+
+            for (
+                key,
+                value,
+            ) in node.items():
+
+                key_string = str(
+                    key
+                )
+
+                if (
+                    key_string.lower()
+                    in
+                    ignored_keys
+                ):
+
+                    continue
+
+                if isinstance(
+                    value,
+                    (
+                        str,
+                        int,
+                        float,
+                    ),
+                ):
+
+                    text = (
+                        str(
+                            value
+                        )
+                        .strip()
+                    )
+
+                    if (
+                        text
+                        and
+                        text.upper()
+                        !=
+                        DYNAMIC_NOT_DETECTED
+                    ):
+
+                        collected.append(
+                            {
+                                "page":
+                                    None,
+
+                                "text":
+                                    (
+                                        f"{key_string}: "
+                                        f"{text}"
+                                    ),
+
+                                "x0":
+                                    0.0,
+
+                                "y0":
+                                    0.0,
+
+                                "x1":
+                                    0.0,
+
+                                "y1":
+                                    0.0,
+
+                                "source":
+                                    "PRODUCTION_RESULT",
+                            }
+                        )
+
+                else:
+
+                    walk(
+                        value
+                    )
+
+        elif isinstance(
+            node,
+            list,
+        ):
+
+            for item in node:
+
+                walk(
+                    item
+                )
+
+    walk(
+        payload
+    )
+
+    return collected
+
+
+def _dynamic_document_lines(
+    input_path,
+    production_result=None,
+):
+
+    lines = (
+        _dynamic_pdf_lines(
+            input_path
+        )
+    )
+
+    if production_result is not None:
+
+        lines.extend(
+            _dynamic_collect_result_text(
+                production_result
+            )
+        )
+
+    return lines
+
+
+# ============================================================
+# TOKEN SIMILARITY
+# ============================================================
+
+def _dynamic_token_similarity(
+    query_tokens: Iterable[str],
+    line_tokens: Iterable[str],
+):
+
+    query_tokens = list(
+        query_tokens
+    )
+
+    line_tokens = list(
+        line_tokens
+    )
+
+    if (
+        not query_tokens
+        or
+        not line_tokens
+    ):
+
+        return 0.0
+
+    used = set()
+
+    scores = []
+
+    for query_token in query_tokens:
+
+        best = 0.0
+
+        best_index = None
+
+        equivalents = (
+            _DYNAMIC_EQUIVALENTS.get(
+                query_token,
+                {
+                    query_token
+                },
+            )
+        )
+
+        for (
+            index,
+            line_token,
+        ) in enumerate(
+            line_tokens
+        ):
+
+            if index in used:
+                continue
+
+            if (
+                line_token
+                in
+                equivalents
+                or
+                query_token
+                ==
+                line_token
+            ):
+
+                score = 1.0
+
+            else:
+
+                score = (
+                    difflib
+                    .SequenceMatcher(
+                        None,
+                        query_token,
+                        line_token,
+                    )
+                    .ratio()
+                )
+
+            if score > best:
+
+                best = score
+                best_index = index
+
+        if (
+            best_index
+            is not None
+            and
+            best
+            >=
+            0.68
+        ):
+
+            used.add(
+                best_index
+            )
+
+        scores.append(
+            best
+        )
+
+    return (
+        sum(
+            scores
+        )
+        /
+        len(
+            scores
+        )
+    )
+
+
+# ============================================================
+# ANCHOR SIMILARITY
+# ============================================================
+
+def _dynamic_anchor_similarity(
+    field_name,
+    line_text,
+):
+
+    line_normalized = (
+        _dynamic_normalize_text(
+            line_text
+        )
+    )
+
+    if not line_normalized:
+
+        return (
+            0.0,
+            None,
+        )
+
+    if not (
+        _dynamic_semantic_anchor_ok(
+            field_name,
+            line_text,
+        )
+    ):
+
+        return (
+            0.0,
+            None,
+        )
+
+    line_tokens = (
+        line_normalized.split()
+    )
+
+    variants = (
+        _dynamic_field_variants(
+            field_name
+        )
+    )
+
+    best_score = 0.0
+    best_variant = None
+
+    for variant in variants:
+
+        variant_tokens = [
+            token
+            for token
+            in variant.split()
+            if token
+            not in
+            _DYNAMIC_STOPWORDS
+        ]
+
+        if not variant_tokens:
+            continue
+
+        if variant in line_normalized:
+
+            score = 1.0
+
+        else:
+
+            token_score = (
+                _dynamic_token_similarity(
+                    variant_tokens,
+                    line_tokens,
+                )
+            )
+
+            sequence_score = (
+                difflib
+                .SequenceMatcher(
+                    None,
+                    variant,
+                    line_normalized,
+                )
+                .ratio()
+            )
+
+            score = max(
+                token_score
+                *
+                0.96,
+                sequence_score
+                *
+                0.78,
+            )
+
+        if score > best_score:
+
+            best_score = score
+            best_variant = variant
+
+    return (
+        best_score,
+        best_variant,
+    )
+
+
+# ============================================================
+# SAME-LINE VALUE
+# ============================================================
+
+def _dynamic_value_after_anchor(
+    line_text,
+    field_name,
+):
+
+    original = (
+        _dynamic_pre_normalize(
+            line_text
+        )
+    )
+
+    separators = (
+        ":",
+        "=",
+        " - ",
+        " – ",
+        " — ",
+    )
+
+    for separator in separators:
+
+        if separator not in original:
+            continue
+
+        pieces = (
+            original.split(
+                separator
+            )
+        )
+
+        if len(pieces) < 2:
+            continue
+
+        for piece_index in range(
+            len(pieces)
+            -
+            1
+        ):
+
+            left = (
+                separator.join(
+                    pieces[
+                        :
+                        piece_index
+                        +
+                        1
+                    ]
+                )
+            )
+
+            similarity, _ = (
+                _dynamic_anchor_similarity(
+                    field_name,
+                    left,
+                )
+            )
+
+            if similarity < 0.66:
+                continue
+
+            right = (
+                separator.join(
+                    pieces[
+                        piece_index
+                        +
+                        1
+                        :
+                    ]
+                )
+            )
+
+            right = (
+                _dynamic_trim_at_next_label(
+                    right
+                )
+            )
+
+            if right:
+                return right
+
+    raw_tokens = (
+        original.split()
+    )
+
+    if not raw_tokens:
+        return ""
+
+    for start in range(
+        len(
+            raw_tokens
+        )
+    ):
+
+        maximum_end = min(
+            len(
+                raw_tokens
+            ),
+            start
+            +
+            8,
+        )
+
+        for end in range(
+            start
+            +
+            1,
+            maximum_end
+            +
+            1,
+        ):
+
+            piece = (
+                " ".join(
+                    raw_tokens[
+                        start:end
+                    ]
+                )
+            )
+
+            similarity, _ = (
+                _dynamic_anchor_similarity(
+                    field_name,
+                    piece,
+                )
+            )
+
+            if similarity >= 0.94:
+
+                remainder = (
+                    " ".join(
+                        raw_tokens[
+                            end:
+                        ]
+                    )
+                )
+
+                remainder = (
+                    _dynamic_trim_at_next_label(
+                        remainder
+                    )
+                )
+
+                if remainder:
+                    return remainder
+
+    return ""
+
+
+# ============================================================
+# CANDIDATE QUALITY
+# ============================================================
+
+def _dynamic_candidate_quality(
+    candidate,
+    field_name,
+):
+
+    candidate = (
+        _dynamic_clean_value(
+            candidate
+        )
+    )
+
+    if not candidate:
+        return -1.0
+
+    if (
+        len(
+            candidate
+        )
+        >
+        DYNAMIC_MAX_VALUE_LENGTH
+    ):
+
+        return -0.25
+
+    candidate_normalized = (
+        _dynamic_normalize_text(
+            candidate
+        )
+    )
+
+    field_normalized = (
+        _dynamic_normalize_text(
+            field_name
+        )
+    )
+
+    if (
+        candidate_normalized
+        ==
+        field_normalized
+    ):
+
+        return -1.0
+
+    score = 0.0
+
+    length = len(
+        candidate
+    )
+
+    if (
+        2
+        <=
+        length
+        <=
+        80
+    ):
+
+        score += 0.12
+
+    elif length <= 160:
+
+        score += 0.05
+
+    else:
+
+        score -= 0.08
+
+    candidate_tokens = set(
+        candidate_normalized.split()
+    )
+
+    field_tokens = set(
+        _dynamic_query_tokens(
+            field_name
+        )
+    )
+
+    if field_tokens:
+
+        overlap = (
+            len(
+                candidate_tokens
+                &
+                field_tokens
+            )
+            /
+            len(
+                field_tokens
+            )
+        )
+
+        if overlap >= 0.80:
+
+            score -= 0.20
+
+    return score
+
+
+# ============================================================
+# GEOMETRY BONUS
+# ============================================================
+
+def _dynamic_geometry_bonus(
+    anchor,
+    candidate,
+):
+
+    if (
+        anchor.get(
+            "page"
+        )
+        is None
+        or
+        candidate.get(
+            "page"
+        )
+        is None
+        or
+        anchor.get(
+            "page"
+        )
+        !=
+        candidate.get(
+            "page"
+        )
+    ):
+
+        return 0.0
+
+    ay0 = float(
+        anchor.get(
+            "y0",
+            0.0,
+        )
+    )
+
+    ay1 = float(
+        anchor.get(
+            "y1",
+            0.0,
+        )
+    )
+
+    ax0 = float(
+        anchor.get(
+            "x0",
+            0.0,
+        )
+    )
+
+    bx0 = float(
+        candidate.get(
+            "x0",
+            0.0,
+        )
+    )
+
+    by0 = float(
+        candidate.get(
+            "y0",
+            0.0,
+        )
+    )
+
+    if (
+        abs(
+            by0
+            -
+            ay0
+        )
+        <=
+        10.0
+        and
+        bx0
+        >=
+        ax0
+    ):
+
+        return 0.10
+
+    below_distance = (
+        by0
+        -
+        ay1
+    )
+
+    if (
+        0
+        <=
+        below_distance
+        <=
+        32.0
+    ):
+
+        return 0.07
+
+    return 0.0
+
+
+# ============================================================
+# FINAL HSN RECOVERY
+#
+# Geometry-first.
+#
+# Critical rule:
+# A value ABOVE "HSN Code:" is never selected.
+# ============================================================
+
+def _dynamic_hsn_candidates(
+    lines,
+):
+
+    candidates = []
+
+    for anchor in lines:
+
+        anchor_text = str(
+            anchor.get(
+                "text",
+                "",
+            )
+        )
+
+        anchor_normalized = (
+            _dynamic_normalize_text(
+                anchor_text
+            )
+        )
+
+        explicit_hsn = (
+            "hsn code"
+            in
+            anchor_normalized
+        )
+
+        table_hsn = (
+            "hsn"
+            in
+            anchor_normalized
+            and
+            "sac"
+            in
+            anchor_normalized
+        )
+
+        if not (
+            explicit_hsn
+            or
+            table_hsn
+        ):
+
+            continue
+
+        anchor_page = (
+            anchor.get(
+                "page"
+            )
+        )
+
+        anchor_x0 = float(
+            anchor.get(
+                "x0",
+                0.0,
+            )
+        )
+
+        anchor_x1 = float(
+            anchor.get(
+                "x1",
+                anchor_x0,
+            )
+        )
+
+        anchor_y0 = float(
+            anchor.get(
+                "y0",
+                0.0,
+            )
+        )
+
+        anchor_y1 = float(
+            anchor.get(
+                "y1",
+                anchor_y0,
+            )
+        )
+
+        # ----------------------------------------------------
+        # SAME-LINE HSN
+        # ----------------------------------------------------
+
+        same_line_match = re.search(
+            r"(?i)"
+            r"(?:"
+            r"HSN"
+            r"(?:\s*/\s*SAC)?"
+            r"(?:\s+CODE)?"
+            r")"
+            r"\s*[:=\-]?\s*"
+            r"(\d{4,8})",
+            anchor_text,
+        )
+
+        if same_line_match:
+
+            value = (
+                same_line_match.group(
+                    1
+                )
+            )
+
+            if len(value) in {
+                4,
+                6,
+                8,
+            }:
+
+                candidates.append(
+                    {
+                        "value":
+                            value,
+
+                        "score":
+                            1.45,
+
+                        "page":
+                            anchor_page,
+
+                        "source":
+                            "HSN_SAME_LINE",
+
+                        "anchor":
+                            anchor_text,
+
+                        "evidence":
+                            anchor_text,
+
+                        "matched_variant":
+                            "hsn code",
+                    }
+                )
+
+        # ----------------------------------------------------
+        # GEOMETRY SEARCH BELOW THE ANCHOR
+        # ----------------------------------------------------
+
+        for candidate_line in lines:
+
+            candidate_page = (
+                candidate_line.get(
+                    "page"
+                )
+            )
+
+            if (
+                anchor_page
+                is not None
+                and
+                candidate_page
+                is not None
+                and
+                anchor_page
+                !=
+                candidate_page
+            ):
+
+                continue
+
+            if candidate_line is anchor:
+                continue
+
+            candidate_text = str(
+                candidate_line.get(
+                    "text",
+                    "",
+                )
+            )
+
+            candidate_normalized = (
+                _dynamic_normalize_text(
+                    candidate_text
+                )
+            )
+
+            # Do not use another label as the value.
+            if (
+                "hsn code"
+                in
+                candidate_normalized
+            ):
+
+                continue
+
+            candidate_y0 = float(
+                candidate_line.get(
+                    "y0",
+                    0.0,
+                )
+            )
+
+            candidate_y1 = float(
+                candidate_line.get(
+                    "y1",
+                    candidate_y0,
+                )
+            )
+
+            candidate_x0 = float(
+                candidate_line.get(
+                    "x0",
+                    0.0,
+                )
+            )
+
+            candidate_x1 = float(
+                candidate_line.get(
+                    "x1",
+                    candidate_x0,
+                )
+            )
+
+            # =================================================
+            # CRITICAL FIX
+            #
+            # Candidate must be BELOW HSN Code.
+            #
+            # Material code above the anchor can never win.
+            # =================================================
+
+            vertical_distance = (
+                candidate_y0
+                -
+                anchor_y1
+            )
+
+            if vertical_distance < -1.5:
+                continue
+
+            # Don't travel too far down the document.
+            if vertical_distance > 70.0:
+                continue
+
+            matches = list(
+                _DYNAMIC_HSN_PATTERN
+                .finditer(
+                    candidate_text
+                )
+            )
+
+            if not matches:
+                continue
+
+            anchor_center_x = (
+                anchor_x0
+                +
+                anchor_x1
+            ) / 2.0
+
+            candidate_center_x = (
+                candidate_x0
+                +
+                candidate_x1
+            ) / 2.0
+
+            x_distance = abs(
+                candidate_center_x
+                -
+                anchor_center_x
+            )
+
+            for match in matches:
+
+                value = (
+                    match.group(
+                        0
+                    )
+                )
+
+                # Standard HSN/SAC lengths.
+                if len(value) not in {
+                    4,
+                    6,
+                    8,
+                }:
+
+                    continue
+
+                score = (
+                    1.00
+                    if explicit_hsn
+                    else
+                    0.78
+                )
+
+                # Strongest preference:
+                # directly below.
+                if (
+                    0
+                    <=
+                    vertical_distance
+                    <=
+                    18
+                ):
+
+                    score += 0.38
+
+                elif (
+                    vertical_distance
+                    <=
+                    35
+                ):
+
+                    score += 0.22
+
+                elif (
+                    vertical_distance
+                    <=
+                    55
+                ):
+
+                    score += 0.10
+
+                # Horizontal alignment.
+                if x_distance <= 25:
+
+                    score += 0.25
+
+                elif x_distance <= 60:
+
+                    score += 0.15
+
+                elif x_distance <= 120:
+
+                    score += 0.05
+
+                # Penalize lines containing multiple unrelated
+                # values / table content.
+                numeric_tokens = re.findall(
+                    r"\d{4,}",
+                    candidate_text,
+                )
+
+                if len(numeric_tokens) > 1:
+
+                    score -= 0.10
+
+                candidates.append(
+                    {
+                        "value":
+                            value,
+
+                        "score":
+                            score,
+
+                        "page":
+                            candidate_page,
+
+                        "source":
+                            "HSN_BELOW_ANCHOR",
+
+                        "anchor":
+                            anchor_text,
+
+                        "evidence":
+                            candidate_text,
+
+                        "matched_variant":
+                            (
+                                "hsn code"
+                                if explicit_hsn
+                                else
+                                "hsn / sac"
+                            ),
+                    }
+                )
+
+    return candidates
+
+
+# ============================================================
+# GLOBAL FORMAT RECOVERY
+# ============================================================
+
+def _dynamic_global_pattern_candidates(
+    field_name,
+    lines,
+):
+
+    field_type = (
+        _dynamic_parameter_type(
+            field_name
+        )
+    )
+
+    if field_type == "hsn":
+
+        return (
+            _dynamic_hsn_candidates(
+                lines
+            )
+        )
+
+    pattern = (
+        _dynamic_pattern_for_type(
+            field_type
+        )
+    )
+
+    if (
+        pattern is None
+        or
+        field_type
+        in {
+            "amount",
+            "date",
+            "phone",
+            "percent",
+        }
+    ):
+
+        return []
+
+    candidates = []
+
+    for line in lines:
+
+        text = str(
+            line.get(
+                "text",
+                "",
+            )
+        )
+
+        for match in (
+            pattern.finditer(
+                text
+            )
+        ):
+
+            value = (
+                _dynamic_clean_value(
+                    match.group(
+                        0
+                    )
+                )
+            )
+
+            if not value:
+                continue
+
+            candidates.append(
+                {
+                    "value":
+                        value,
+
+                    "score":
+                        0.72,
+
+                    "page":
+                        line.get(
+                            "page"
+                        ),
+
+                    "source":
+                        "GLOBAL_FORMAT_MATCH",
+
+                    "anchor":
+                        None,
+
+                    "evidence":
+                        text,
+
+                    "matched_variant":
+                        None,
+                }
+            )
+
+    return candidates
+
+
+# ============================================================
+# GENERATE CANDIDATES
+# ============================================================
+
+def _dynamic_candidates_for_field(
+    field_name,
+    lines,
+):
+
+    field_type = (
+        _dynamic_parameter_type(
+            field_name
+        )
+    )
+
+    candidates = []
+
+    # HSN uses only geometry-aware HSN logic.
+    #
+    # We deliberately do NOT let generic nearby-number
+    # matching compete with it anymore.
+    if field_type == "hsn":
+
+        return (
+            _dynamic_hsn_candidates(
+                lines
+            )
+        )
+
+    for (
+        index,
+        line,
+    ) in enumerate(
+        lines
+    ):
+
+        line_text = str(
+            line.get(
+                "text",
+                "",
+            )
+        )
+
+        anchor_score, variant = (
+            _dynamic_anchor_similarity(
+                field_name,
+                line_text,
+            )
+        )
+
+        if anchor_score < 0.62:
+            continue
+
+        same_line_value = (
+            _dynamic_value_after_anchor(
+                line_text,
+                field_name,
+            )
+        )
+
+        if same_line_value:
+
+            value = (
+                _dynamic_extract_typed_value(
+                    field_type,
+                    same_line_value,
+                )
+            )
+
+            score = (
+                anchor_score
+                *
+                0.58
+                +
+                0.24
+                +
+                _dynamic_candidate_quality(
+                    value,
+                    field_name,
+                )
+                +
+                _dynamic_pattern_score(
+                    field_type,
+                    same_line_value,
+                )
+            )
+
+            candidates.append(
+                {
+                    "value":
+                        value,
+
+                    "score":
+                        score,
+
+                    "page":
+                        line.get(
+                            "page"
+                        ),
+
+                    "source":
+                        "SAME_LINE_ANCHOR",
+
+                    "anchor":
+                        line_text,
+
+                    "evidence":
+                        line_text,
+
+                    "matched_variant":
+                        variant,
+                }
+            )
+
+        line_normalized = (
+            _dynamic_normalize_text(
+                line_text
+            )
+        )
+
+        field_variants = (
+            _dynamic_field_variants(
+                field_name
+            )
+        )
+
+        clean_label_like = any(
+            line_normalized
+            ==
+            field_variant
+            for field_variant
+            in field_variants
+        )
+
+        if (
+            not clean_label_like
+            and
+            anchor_score
+            <
+            0.90
+        ):
+
+            continue
+
+        for offset in (
+            1,
+            2,
+        ):
+
+            next_index = (
+                index
+                +
+                offset
+            )
+
+            if (
+                next_index
+                >=
+                len(
+                    lines
+                )
+            ):
+
+                continue
+
+            next_line = (
+                lines[
+                    next_index
+                ]
+            )
+
+            current_page = (
+                line.get(
+                    "page"
+                )
+            )
+
+            next_page = (
+                next_line.get(
+                    "page"
+                )
+            )
+
+            if (
+                current_page
+                is not None
+                and
+                next_page
+                is not None
+                and
+                current_page
+                !=
+                next_page
+            ):
+
+                continue
+
+            next_text = (
+                _dynamic_clean_value(
+                    next_line.get(
+                        "text",
+                        "",
+                    )
+                )
+            )
+
+            if not next_text:
+                continue
+
+            value = (
+                _dynamic_extract_typed_value(
+                    field_type,
+                    next_text,
+                )
+            )
+
+            distance_bonus = (
+                0.11
+                if offset
+                ==
+                1
+                else
+                0.05
+            )
+
+            score = (
+                anchor_score
+                *
+                0.52
+                +
+                distance_bonus
+                +
+                _dynamic_candidate_quality(
+                    value,
+                    field_name,
+                )
+                +
+                _dynamic_pattern_score(
+                    field_type,
+                    next_text,
+                )
+                +
+                _dynamic_geometry_bonus(
+                    line,
+                    next_line,
+                )
+            )
+
+            candidates.append(
+                {
+                    "value":
+                        value,
+
+                    "score":
+                        score,
+
+                    "page":
+                        next_page,
+
+                    "source":
+                        (
+                            "NEXT_LINE_ANCHOR"
+                            if offset == 1
+                            else
+                            "SECOND_LINE_ANCHOR"
+                        ),
+
+                    "anchor":
+                        line_text,
+
+                    "evidence":
+                        next_text,
+
+                    "matched_variant":
+                        variant,
+                }
+            )
+
+    candidates.extend(
+        _dynamic_global_pattern_candidates(
+            field_name,
+            lines,
+        )
+    )
+
+    cleaned = []
+
+    for candidate in candidates:
+
+        value = (
+            _dynamic_clean_value(
+                candidate.get(
+                    "value",
+                    "",
+                )
+            )
+        )
+
+        if not value:
+            continue
+
+        if (
+            len(
+                value
+            )
+            >
+            DYNAMIC_MAX_VALUE_LENGTH
+        ):
+
+            continue
+
+        candidate[
+            "value"
+        ] = value
+
+        cleaned.append(
+            candidate
+        )
+
+    return cleaned
+
+
+# ============================================================
+# DEDUPLICATE CANDIDATES
+# ============================================================
+
+def _dynamic_dedupe_candidates(
+    candidates,
+):
+
+    best_by_value = {}
+
+    for candidate in candidates:
+
+        key = (
+            _dynamic_normalize_text(
+                candidate.get(
+                    "value",
+                    "",
+                )
+            )
+        )
+
+        if not key:
+            continue
+
+        existing = (
+            best_by_value.get(
+                key
+            )
+        )
+
+        if (
+            existing is None
+            or
+            float(
+                candidate.get(
+                    "score",
+                    0.0,
+                )
+            )
+            >
+            float(
+                existing.get(
+                    "score",
+                    0.0,
+                )
+            )
+        ):
+
+            best_by_value[
+                key
+            ] = candidate
+
+    return sorted(
+        best_by_value.values(),
+        key=lambda item: float(
+            item.get(
+                "score",
+                0.0,
+            )
+        ),
+        reverse=True,
+    )
+
+
+# ============================================================
+# SCORE -> CONFIDENCE
+# ============================================================
+
+def _dynamic_score_to_confidence(
+    score,
+):
+
+    confidence = (
+        (
+            float(
+                score
+            )
+            -
+            0.35
+        )
+        /
+        0.75
+    )
+
+    confidence = max(
+        0.0,
+        min(
+            1.0,
+            confidence,
+        ),
+    )
+
+    return round(
+        confidence,
+        4,
+    )
+
+
+# ============================================================
+# PUBLIC DYNAMIC API
+# ============================================================
+
+def extract_dynamic_parameters(
+    input_path,
+    requested_fields,
+    *,
+    production_result=None,
+    min_confidence=
+        DYNAMIC_MIN_CONFIDENCE,
+):
+
+    cleaned_requests = []
+
+    seen = set()
+
+    for raw_field in (
+        requested_fields
+        or
+        []
+    ):
+
+        field = (
+            str(
+                raw_field
+            )
+            .strip()
+        )
+
+        if not field:
+            continue
+
+        key = (
+            _dynamic_normalize_text(
+                field
+            )
+        )
+
+        if (
+            not key
+            or
+            key
+            in
+            seen
+        ):
+
+            continue
+
+        seen.add(
+            key
+        )
+
+        cleaned_requests.append(
+            field
+        )
+
+        if (
+            len(
+                cleaned_requests
+            )
+            >=
+            DYNAMIC_MAX_FIELDS
+        ):
+
+            break
+
+    if not cleaned_requests:
+        return {}
+
+    lines = (
+        _dynamic_document_lines(
+            input_path,
+            production_result=
+                production_result,
+        )
+    )
+
+    output = {}
+
+    if not lines:
+
+        for field in cleaned_requests:
+
+            output[
+                field
+            ] = {
+                "value":
+                    DYNAMIC_NOT_DETECTED,
+
+                "status":
+                    DYNAMIC_NOT_DETECTED,
+
+                "confidence":
+                    0.0,
+
+                "page":
+                    None,
+
+                "source":
+                    "NO_DOCUMENT_TEXT",
+
+                "evidence":
+                    None,
+            }
+
+        return output
+
+    for field in cleaned_requests:
+
+        candidates = (
+            _dynamic_dedupe_candidates(
+                _dynamic_candidates_for_field(
+                    field,
+                    lines,
+                )
+            )
+        )
+
+        if not candidates:
+
+            output[
+                field
+            ] = {
+                "value":
+                    DYNAMIC_NOT_DETECTED,
+
+                "status":
+                    DYNAMIC_NOT_DETECTED,
+
+                "confidence":
+                    0.0,
+
+                "page":
+                    None,
+
+                "source":
+                    "NO_EVIDENCE",
+
+                "evidence":
+                    None,
+            }
+
+            continue
+
+        best = (
+            candidates[
+                0
+            ]
+        )
+
+        confidence = (
+            _dynamic_score_to_confidence(
+                best.get(
+                    "score",
+                    0.0,
+                )
+            )
+        )
+
+        ambiguous = False
+
+        if len(candidates) >= 2:
+
+            first_value = (
+                _dynamic_normalize_text(
+                    candidates[
+                        0
+                    ].get(
+                        "value",
+                        "",
+                    )
+                )
+            )
+
+            second_value = (
+                _dynamic_normalize_text(
+                    candidates[
+                        1
+                    ].get(
+                        "value",
+                        "",
+                    )
+                )
+            )
+
+            score_gap = (
+                float(
+                    candidates[
+                        0
+                    ].get(
+                        "score",
+                        0.0,
+                    )
+                )
+                -
+                float(
+                    candidates[
+                        1
+                    ].get(
+                        "score",
+                        0.0,
+                    )
+                )
+            )
+
+            if (
+                first_value
+                !=
+                second_value
+                and
+                score_gap
+                <
+                0.035
+                and
+                confidence
+                <
+                0.84
+            ):
+
+                ambiguous = True
+
+        if (
+            confidence
+            <
+            float(
+                min_confidence
+            )
+            or
+            ambiguous
+        ):
+
+            output[
+                field
+            ] = {
+                "value":
+                    DYNAMIC_NOT_DETECTED,
+
+                "status":
+                    (
+                        "AMBIGUOUS"
+                        if ambiguous
+                        else
+                        DYNAMIC_NOT_DETECTED
+                    ),
+
+                "confidence":
+                    confidence,
+
+                "page":
+                    best.get(
+                        "page"
+                    ),
+
+                "source":
+                    best.get(
+                        "source"
+                    ),
+
+                "evidence":
+                    best.get(
+                        "evidence"
+                    ),
+            }
+
+            continue
+
+        output[
+            field
+        ] = {
+            "value":
+                best.get(
+                    "value",
+                    DYNAMIC_NOT_DETECTED,
+                ),
+
+            "status":
+                "DETECTED",
+
+            "confidence":
+                confidence,
+
+            "page":
+                best.get(
+                    "page"
+                ),
+
+            "source":
+                best.get(
+                    "source"
+                ),
+
+            "evidence":
+                best.get(
+                    "evidence"
+                ),
+        }
+
+    return output
+
+
+# ============================================================
+# COMBINED PRODUCTION + DYNAMIC API
+# ============================================================
+
+def process_invoice_with_dynamic(
+    input_path,
+    requested_fields=None,
+    *,
+    min_dynamic_confidence=
+        DYNAMIC_MIN_CONFIDENCE,
+):
+
+    engine = (
+        load_v3_production_engine()
+    )
+
+    process_invoice_final = (
+        engine[
+            "process_invoice_final"
+        ]
+    )
+
+    production_result = (
+        process_invoice_final(
+            str(
+                input_path
+            )
+        )
+    )
+
+    dynamic_fields = (
+        extract_dynamic_parameters(
+            input_path,
+            requested_fields
+            or
+            [],
+            production_result=
+                production_result,
+            min_confidence=
+                min_dynamic_confidence,
+        )
+    )
+
+    return {
+        "production_result":
+            production_result,
+
+        "dynamic_fields":
+            dynamic_fields,
+
+        "dynamic_requested":
+            list(
+                requested_fields
+                or
+                []
+            ),
+
+        "dynamic_schema_mode":
+            "RUNTIME_USER_DEFINED",
+
+        "trained_schema_fields":
+            list(
+                EXPECTED_FIELDS
+            ),
+    }
+
+
+# ============================================================
+# MODEL VERIFICATION
 # ============================================================
 
 def verify_model():
 
     print(
-        "=" * 72
+        "="
+        *
+        72
     )
-
 
     print(
         "INVOICE AI V3 — MODEL VERIFICATION"
     )
 
-
     print(
-        "=" * 72
+        "="
+        *
+        72
     )
-
 
     engine = (
         load_v3_model()
     )
 
-
     print(
         "\n✅ FINAL V3 MODEL READY"
     )
-
 
     print(
         "Architecture :",
@@ -1710,59 +4953,57 @@ def verify_model():
         ].__class__.__name__,
     )
 
-
     print(
         "Parameters   :",
         f"{engine['parameter_count']:,}",
     )
 
-
     print(
         "Fields       :",
         len(
-            engine["fields"]
+            engine[
+                "fields"
+            ]
         ),
     )
-
 
     print(
         "BIO Labels   :",
         len(
-            engine["label_list"]
+            engine[
+                "label_list"
+            ]
         ),
     )
 
-
     print(
         "Device       :",
-        engine["device"],
+        engine[
+            "device"
+        ],
     )
-
-
-    print(
-        "Model path   :",
-        engine["model_dir"],
-    )
-
 
     print(
         "\n"
-        + "=" * 72
+        +
+        "="
+        *
+        72
     )
-
 
     print(
         "🔥 FINAL V3 MODEL VERIFIED"
     )
 
-
     print(
-        "=" * 72
+        "="
+        *
+        72
     )
 
 
 # ============================================================
-# VERIFY COMPLETE PRODUCTION ENGINE
+# COMPLETE PRODUCTION VERIFICATION
 # ============================================================
 
 def verify_production(
@@ -1770,20 +5011,21 @@ def verify_production(
 ):
 
     print(
-        "=" * 72
+        "="
+        *
+        72
     )
-
 
     print(
         "INVOICE AI V3 — "
         "COMPLETE PRODUCTION VERIFICATION"
     )
 
-
     print(
-        "=" * 72
+        "="
+        *
+        72
     )
-
 
     engine = (
         load_v3_production_engine(
@@ -1792,11 +5034,9 @@ def verify_production(
         )
     )
 
-
     print(
         "\n✅ FINAL V3 MODEL"
     )
-
 
     print(
         "Architecture :",
@@ -1805,39 +5045,39 @@ def verify_production(
         ].__class__.__name__,
     )
 
-
     print(
         "Parameters   :",
         f"{engine['parameter_count']:,}",
     )
 
-
     print(
         "Fields       :",
         len(
-            engine["fields"]
+            engine[
+                "fields"
+            ]
         ),
     )
-
 
     print(
         "BIO Labels   :",
         len(
-            engine["label_list"]
+            engine[
+                "label_list"
+            ]
         ),
     )
 
-
     print(
         "Device       :",
-        engine["device"],
+        engine[
+            "device"
+        ],
     )
-
 
     print(
         "\n✅ PRODUCTION RUNTIME"
     )
-
 
     print(
         "Loader       :",
@@ -1846,7 +5086,6 @@ def verify_production(
         ],
     )
 
-
     print(
         "Writable root:",
         engine[
@@ -1854,11 +5093,9 @@ def verify_production(
         ],
     )
 
-
     print(
         "\n✅ FINAL INFERENCE FUNCTION"
     )
-
 
     print(
         "process_invoice_final callable :",
@@ -1869,21 +5106,46 @@ def verify_production(
         ),
     )
 
+    print(
+        "\n✅ DYNAMIC PARAMETER LAYER"
+    )
+
+    print(
+        "extract_dynamic_parameters callable :",
+        callable(
+            extract_dynamic_parameters
+        ),
+    )
+
+    print(
+        "process_invoice_with_dynamic callable :",
+        callable(
+            process_invoice_with_dynamic
+        ),
+    )
+
+    print(
+        "Dynamic schema mode : "
+        "RUNTIME_USER_DEFINED"
+    )
 
     print(
         "\n"
-        + "=" * 72
+        +
+        "="
+        *
+        72
     )
-
 
     print(
         "🔥 INVOICE AI V3 COMPLETE "
         "PRODUCTION ENGINE VERIFIED"
     )
 
-
     print(
-        "=" * 72
+        "="
+        *
+        72
     )
 
 
@@ -1893,37 +5155,30 @@ def verify_production(
 
 def main():
 
-    parser = (
-        argparse.ArgumentParser(
-            description=(
-                "Invoice AI V3 "
-                "Production Engine"
-            )
+    parser = argparse.ArgumentParser(
+        description=(
+            "Invoice AI V3 "
+            "Production Engine"
         )
     )
-
 
     parser.add_argument(
         "--model-only",
         action="store_true",
     )
 
-
     parser.add_argument(
         "--rebuild-runtime",
         action="store_true",
     )
 
-
     args = (
         parser.parse_args()
     )
 
-
     if args.model_only:
 
         verify_model()
-
 
     else:
 
