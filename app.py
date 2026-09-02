@@ -39,7 +39,7 @@ except ImportError:
 from invoice_engine import (
     EXPECTED_FIELDS,
     load_v3_production_engine,
-    process_invoice_auto_dynamic,
+    process_invoice_dynamic_final,
 )
 
 
@@ -2636,6 +2636,21 @@ def clean_dynamic_result(
 def process_upload(
     uploaded_file,
 ):
+    """
+    FINAL FRONTEND -> UNIFIED ENGINE BRIDGE.
+
+    The frontend supplies only the uploaded document.
+
+    invoice_engine.py performs:
+      - LayoutLMv3 trained extraction
+      - automatic dynamic schema discovery
+      - dynamic value extraction
+      - V7 reconciliation
+      - trained + dynamic field merger
+      - unified JSON generation
+
+    No frontend field schema is supplied.
+    """
 
     suffix = (
         Path(
@@ -2665,36 +2680,16 @@ def process_upload(
                 temp_file.name
             )
 
-        # ====================================================
-        # FINAL ARCHITECTURE
-        #
-        # app.py:
-        #   uploads document
-        #   displays result
-        #
-        # invoice_engine.py:
-        #   LayoutLMv3 16-field inference
-        #   automatic extra-field discovery
-        #   dynamic value extraction
-        #   HSN protection
-        #   GST reconciliation
-        #   combined structured result
-        #
-        # No schema is supplied by Streamlit.
-        # ====================================================
-
         result = (
-            process_invoice_auto_dynamic(
+            process_invoice_dynamic_final(
                 str(
                     temp_path
                 )
             )
         )
 
-        return (
-            make_json_safe(
-                result
-            )
+        return make_json_safe(
+            result
         )
 
     finally:
@@ -2708,6 +2703,7 @@ def process_upload(
                 )
 
             except Exception:
+
                 pass
 
 
@@ -2718,17 +2714,31 @@ def process_upload(
 def production_payload(
     result: Any,
 ) -> Any:
+    """
+    Unified V3 Dynamic result is already the production payload.
+
+    Backward-compatible fallback remains for older cached results.
+    """
+
+    if not isinstance(
+        result,
+        dict,
+    ):
+        return result
 
     if (
-        isinstance(
-            result,
-            dict,
+        result.get(
+            "schema_version"
         )
-        and
+        ==
+        "invoice_ai_v3_dynamic_unified_v1"
+    ):
+        return result
+
+    if (
         "production_result"
         in result
     ):
-
         return result[
             "production_result"
         ]
@@ -2736,15 +2746,79 @@ def production_payload(
     return result
 
 
-def dynamic_payload(
+def unified_fields_payload(
     result: Any,
 ) -> dict:
+    """
+    Return the one combined trained + dynamic field dictionary.
+    """
 
     if not isinstance(
         result,
         dict,
     ):
         return {}
+
+    fields = result.get(
+        "fields",
+        {},
+    )
+
+    if isinstance(
+        fields,
+        dict,
+    ):
+        return fields
+
+    return {}
+
+
+def dynamic_payload(
+    result: Any,
+) -> dict:
+    """
+    Return only fields whose unified origin is AUTO_DYNAMIC.
+
+    Older wrapper results are still supported.
+    """
+
+    if not isinstance(
+        result,
+        dict,
+    ):
+        return {}
+
+    fields = result.get(
+        "fields"
+    )
+
+    if isinstance(
+        fields,
+        dict,
+    ):
+
+        return {
+            field_name:
+                information
+
+            for (
+                field_name,
+                information,
+            ) in fields.items()
+
+            if (
+                isinstance(
+                    information,
+                    dict,
+                )
+                and
+                information.get(
+                    "origin"
+                )
+                ==
+                "AUTO_DYNAMIC"
+            )
+        }
 
     dynamic = result.get(
         "dynamic_fields",
@@ -2758,6 +2832,45 @@ def dynamic_payload(
         return dynamic
 
     return {}
+
+
+def trained_payload(
+    result: Any,
+) -> dict:
+    """
+    Return only the fixed trained neural-schema fields.
+    """
+
+    if not isinstance(
+        result,
+        dict,
+    ):
+        return {}
+
+    fields = result.get(
+        "fields",
+        {},
+    )
+
+    if not isinstance(
+        fields,
+        dict,
+    ):
+        return {}
+
+    output = {}
+
+    for field_name in EXPECTED_FIELDS:
+
+        if field_name in fields:
+
+            output[
+                field_name
+            ] = fields[
+                field_name
+            ]
+
+    return output
 
 
 # ============================================================
@@ -3085,8 +3198,19 @@ def render_line_items(
 def render_results(
     result,
 ):
+    """
+    Render ONE unified Invoice AI V3 Dynamic result.
+    """
 
     core_result = production_payload(
+        result
+    )
+
+    all_fields = unified_fields_payload(
+        result
+    )
+
+    trained_fields = trained_payload(
         result
     )
 
@@ -3094,145 +3218,268 @@ def render_results(
         result
     )
 
-    fields = normalized_fields(
-        core_result
-    )
-
     st.success(
-        "✅ Invoice processed successfully"
+        "? Invoice processed successfully"
     )
 
     render_summary(
-        fields
+        trained_fields
     )
 
-    discovered = result.get(
-        "auto_discovered_parameters",
-        [],
+    field_summary = (
+        result.get(
+            "field_summary",
+            {},
+        )
+        if isinstance(
+            result,
+            dict,
+        )
+        else
+        {}
     )
 
-    detected_count = sum(
-        1
-
-        for item
-        in dynamic_fields.values()
-
-        if (
-            isinstance(
-                item,
-                dict,
-            )
-            and
-            item.get(
-                "status"
-            )
-            ==
-            "DETECTED"
+    total_fields = (
+        field_summary.get(
+            "total_fields",
+            len(
+                all_fields
+            ),
         )
     )
 
-    metric1, metric2 = st.columns(
-        2
+    trained_count = (
+        field_summary.get(
+            "trained_schema_fields",
+            len(
+                trained_fields
+            ),
+        )
+    )
+
+    dynamic_count = (
+        field_summary.get(
+            "auto_dynamic_fields",
+            len(
+                dynamic_fields
+            ),
+        )
+    )
+
+    resolved_count = (
+        field_summary.get(
+            "resolved_fields",
+            0,
+        )
+    )
+
+    metric1, metric2, metric3, metric4 = (
+        st.columns(
+            4
+        )
     )
 
     metric1.metric(
-        "Additional Fields Discovered",
-        len(discovered),
+        "Unified Fields",
+        total_fields,
     )
 
     metric2.metric(
-        "Additional Fields Detected",
-        detected_count,
+        "Trained Fields",
+        trained_count,
+    )
+
+    metric3.metric(
+        "Dynamic Fields",
+        dynamic_count,
+    )
+
+    metric4.metric(
+        "Resolved Fields",
+        resolved_count,
     )
 
     (
-        tab_fields,
+        tab_all,
+        tab_trained,
         tab_dynamic,
         tab_items,
-        tab_structured,
         tab_json,
     ) = st.tabs(
         [
-            "Extracted Fields",
-            "Auto Dynamic Fields",
+            "Unified Fields",
+            "Trained Schema",
+            "Dynamic Fields",
             "Line Items",
-            "Structured Result",
-            "Raw JSON",
+            "Final JSON",
         ]
     )
 
-    with tab_fields:
+
+    with tab_all:
 
         st.markdown(
-            "#### Trained 16-field extraction"
+            "#### Unified Invoice Fields"
         )
 
         st.caption(
-            "Fixed LayoutLMv3 neural schema."
+            "Trained LayoutLMv3 fields and automatically "
+            "discovered fields are merged into one result."
+        )
+
+        rows = []
+
+        for (
+            field_name,
+            information,
+        ) in all_fields.items():
+
+            if isinstance(
+                information,
+                dict,
+            ):
+
+                value = display_value(
+                    information
+                )
+
+                origin = information.get(
+                    "origin",
+                    "",
+                )
+
+                status = information.get(
+                    "status",
+                    "",
+                )
+
+                source = information.get(
+                    "source",
+                    "",
+                )
+
+            else:
+
+                value = display_value(
+                    information
+                )
+
+                origin = ""
+                status = ""
+                source = ""
+
+            rows.append(
+                {
+                    "Field":
+                        field_name,
+
+                    "Value":
+                        value,
+
+                    "Origin":
+                        origin,
+
+                    "Status":
+                        status,
+
+                    "Source":
+                        source,
+                }
+            )
+
+        st.dataframe(
+            pd.DataFrame(
+                rows
+            ),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+
+    with tab_trained:
+
+        st.markdown(
+            "#### LayoutLMv3 Trained Schema"
+        )
+
+        st.caption(
+            "The fixed 16-field neural extraction schema."
         )
 
         render_fields(
-            fields
+            trained_fields
         )
+
 
     with tab_dynamic:
 
         st.markdown(
-            "#### Automatically discovered invoice fields"
+            "#### Automatically Discovered Fields"
         )
 
         st.caption(
-            "Additional invoice fields were discovered "
-            "from the document automatically. "
-            "No client-entered field list was required."
+            "Additional invoice parameters discovered "
+            "by the inference engine automatically. "
+            "No manual field list was supplied."
+        )
+
+        discovered = (
+            result.get(
+                "auto_discovered_parameters",
+                [],
+            )
+            if isinstance(
+                result,
+                dict,
+            )
+            else
+            []
         )
 
         if discovered:
 
             with st.expander(
-                "Detected Schema",
+                "Auto-discovered schema",
                 expanded=False,
             ):
 
                 for field in discovered:
 
                     st.write(
-                        f"• {field}"
+                        f"? {field}"
                     )
 
         render_dynamic_fields(
             dynamic_fields
         )
 
+
     with tab_items:
 
         st.markdown(
-            "#### Material / line-item extraction"
+            "#### Material / Line-Item Extraction"
         )
 
         render_line_items(
             core_result
         )
 
-    with tab_structured:
-
-        st.markdown(
-            "#### Complete structured output"
-        )
-
-        st.write(
-            result
-        )
 
     with tab_json:
 
         st.markdown(
-            "#### Raw JSON"
+            "#### Final Unified JSON"
+        )
+
+        st.caption(
+            "This is the single production JSON returned "
+            "by Invoice_AI_V3_Dynamic_Production."
         )
 
         st.json(
             result
         )
+
 
     json_bytes = (
         json.dumps(
@@ -3246,10 +3493,10 @@ def render_results(
     )
 
     st.download_button(
-        "⬇ Download JSON Result",
+        "? Download Unified JSON",
         data=json_bytes,
         file_name=
-            "invoice_extraction.json",
+            "invoice_ai_v3_dynamic_result.json",
         mime=
             "application/json",
     )

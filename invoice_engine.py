@@ -8584,3 +8584,907 @@ def main():
 if __name__ == "__main__":
 
     main()
+
+
+# ============================================================
+# INVOICE AI V3 ? UNIFIED DYNAMIC PRODUCTION LAYER
+# ============================================================
+#
+# PURPOSE
+# -------
+# Creates ONE production result from:
+#
+#   1. LayoutLMv3 trained 16-field extraction
+#   2. Automatic runtime schema discovery
+#   3. Automatic dynamic value extraction
+#   4. V3/V4/V5/V6/V6.1/V7 reconciliation
+#
+# IMPORTANT
+# ---------
+# LayoutLMv3 neural labels remain the trained fixed schema.
+# Dynamic fields are discovered automatically by the
+# inference engine and merged into the same final field map.
+#
+# No retraining.
+# No weight modification.
+# No frontend field requests required.
+#
+# FINAL ENTRY POINT
+# -----------------
+# process_invoice_dynamic_final(path)
+#
+# ============================================================
+
+
+UNIFIED_SCHEMA_VERSION = (
+    "invoice_ai_v3_dynamic_unified_v1"
+)
+
+UNIFIED_MODEL_NAME = (
+    "Invoice_AI_V3_Dynamic_Production"
+)
+
+UNIFIED_INFERENCE_MODE = (
+    "TRAINED_PLUS_AUTOMATIC_DYNAMIC"
+)
+
+
+def _unified_deepcopy(
+    value,
+):
+    """
+    Safe deepcopy helper.
+
+    Imported locally so the existing production engine
+    imports do not need to be modified.
+    """
+
+    import copy
+
+    try:
+        return copy.deepcopy(
+            value
+        )
+
+    except Exception:
+        return value
+
+
+def _unified_clean_label(
+    label,
+):
+    """
+    Convert a field name to a comparison-safe key.
+
+    Used only for collision checking.
+    The original display label is preserved in output.
+    """
+
+    import re
+
+    text = str(
+        label or ""
+    ).strip().lower()
+
+    text = re.sub(
+        r"[^a-z0-9]+",
+        "",
+        text,
+    )
+
+    return text
+
+
+def _unified_is_missing_value(
+    value,
+):
+    """
+    Determine whether an extracted value is genuinely empty.
+    """
+
+    if value is None:
+        return True
+
+    if isinstance(
+        value,
+        str,
+    ):
+        text = value.strip()
+
+        return text.upper() in {
+            "",
+            "NOT_DETECTED",
+            "NOT DETECTED",
+            "NOT_PRESENT",
+            "NOT PRESENT",
+            "NONE",
+            "NULL",
+            "N/A",
+            "NA",
+        }
+
+    if isinstance(
+        value,
+        (list, tuple, dict),
+    ):
+        return len(
+            value
+        ) == 0
+
+    return False
+
+
+def _unified_field_object(
+    field_name,
+    field_data,
+    *,
+    origin,
+):
+    """
+    Normalize trained and dynamic field payloads into
+    one common field representation.
+
+    Existing values/status/source are preserved.
+    """
+
+    if isinstance(
+        field_data,
+        dict,
+    ):
+        obj = _unified_deepcopy(
+            field_data
+        )
+
+    else:
+        obj = {
+            "value": _unified_deepcopy(
+                field_data
+            )
+        }
+
+    obj["origin"] = origin
+
+    if (
+        "status" not in obj
+        or not obj.get(
+            "status"
+        )
+    ):
+        if _unified_is_missing_value(
+            obj.get(
+                "value"
+            )
+        ):
+            obj["status"] = (
+                "NOT_DETECTED"
+            )
+
+        else:
+            obj["status"] = (
+                "DETECTED"
+            )
+
+    if (
+        "source" not in obj
+        or not obj.get(
+            "source"
+        )
+    ):
+        if origin == "TRAINED_SCHEMA":
+            obj["source"] = (
+                "TRAINED_MODEL"
+            )
+
+        else:
+            obj["source"] = (
+                "AUTO_DYNAMIC"
+            )
+
+    obj["field_name"] = (
+        str(
+            field_name
+        )
+    )
+
+    return obj
+
+
+def _unified_trained_field_aliases():
+    """
+    Comparison keys for the fixed trained schema.
+
+    This prevents a dynamically discovered field from
+    overwriting an existing trained field.
+    """
+
+    aliases = set()
+
+    for field_name in EXPECTED_FIELDS:
+        aliases.add(
+            _unified_clean_label(
+                field_name
+            )
+        )
+
+    manual_aliases = {
+        "vendorname",
+        "sellername",
+        "suppliername",
+
+        "invoicenumber",
+        "invoiceno",
+        "invoiceid",
+
+        "invoicedate",
+        "duedate",
+
+        "customername",
+        "buyername",
+
+        "address",
+        "customeraddress",
+        "billingaddress",
+
+        "currency",
+
+        "lineitemdesc",
+        "lineitemdescription",
+        "description",
+
+        "lineitemqty",
+        "quantity",
+
+        "lineitemunitprice",
+        "unitprice",
+
+        "lineitemamount",
+
+        "tax",
+        "totaltax",
+
+        "discount",
+
+        "subtotal",
+
+        "totalamount",
+        "grandtotal",
+
+        "paymentterms",
+    }
+
+    aliases.update(
+        manual_aliases
+    )
+
+    return aliases
+
+
+def _unified_merge_fields(
+    production_result,
+    dynamic_fields,
+):
+    """
+    Merge trained fields and automatic dynamic fields into
+    ONE final fields dictionary.
+
+    Priority:
+        trained schema wins on semantic collisions.
+
+    Dynamic fields that represent additional invoice
+    parameters are appended automatically.
+    """
+
+    combined = {}
+
+    trained_fields = {}
+
+    if isinstance(
+        production_result,
+        dict,
+    ):
+        maybe_fields = (
+            production_result.get(
+                "fields"
+            )
+        )
+
+        if isinstance(
+            maybe_fields,
+            dict,
+        ):
+            trained_fields = (
+                maybe_fields
+            )
+
+    # --------------------------------------------------------
+    # TRAINED MODEL FIELDS FIRST
+    # --------------------------------------------------------
+
+    for field_name in EXPECTED_FIELDS:
+
+        field_data = (
+            trained_fields.get(
+                field_name,
+                {
+                    "value":
+                        "NOT_DETECTED",
+                    "status":
+                        "NOT_DETECTED",
+                    "source":
+                        "NOT_DETECTED",
+                },
+            )
+        )
+
+        combined[
+            field_name
+        ] = _unified_field_object(
+            field_name,
+            field_data,
+            origin=(
+                "TRAINED_SCHEMA"
+            ),
+        )
+
+    # Preserve any unexpected production field too.
+    for (
+        field_name,
+        field_data,
+    ) in trained_fields.items():
+
+        if field_name in combined:
+            continue
+
+        combined[
+            field_name
+        ] = _unified_field_object(
+            field_name,
+            field_data,
+            origin=(
+                "PRODUCTION_RUNTIME"
+            ),
+        )
+
+    # --------------------------------------------------------
+    # AUTOMATIC DYNAMIC FIELDS
+    # --------------------------------------------------------
+
+    if not isinstance(
+        dynamic_fields,
+        dict,
+    ):
+        dynamic_fields = {}
+
+    trained_aliases = (
+        _unified_trained_field_aliases()
+    )
+
+    existing_keys = {
+        _unified_clean_label(
+            name
+        )
+        for name
+        in combined
+    }
+
+    for (
+        dynamic_name,
+        dynamic_data,
+    ) in dynamic_fields.items():
+
+        clean_name = (
+            _unified_clean_label(
+                dynamic_name
+            )
+        )
+
+        if not clean_name:
+            continue
+
+        # Do not overwrite semantic equivalents
+        # of fixed neural fields.
+        if clean_name in trained_aliases:
+            continue
+
+        if clean_name in existing_keys:
+            continue
+
+        combined[
+            dynamic_name
+        ] = _unified_field_object(
+            dynamic_name,
+            dynamic_data,
+            origin=(
+                "AUTO_DYNAMIC"
+            ),
+        )
+
+        existing_keys.add(
+            clean_name
+        )
+
+    return combined
+
+
+def _unified_field_counts(
+    fields,
+):
+    """
+    Produce transparent field-count statistics.
+    """
+
+    trained_count = 0
+    dynamic_count = 0
+    resolved_count = 0
+    unresolved_count = 0
+
+    for (
+        _field_name,
+        field_data,
+    ) in fields.items():
+
+        if not isinstance(
+            field_data,
+            dict,
+        ):
+            continue
+
+        origin = field_data.get(
+            "origin"
+        )
+
+        if origin == "TRAINED_SCHEMA":
+            trained_count += 1
+
+        elif origin == "AUTO_DYNAMIC":
+            dynamic_count += 1
+
+        value = field_data.get(
+            "value"
+        )
+
+        if _unified_is_missing_value(
+            value
+        ):
+            unresolved_count += 1
+
+        else:
+            resolved_count += 1
+
+    return {
+        "total_fields":
+            len(fields),
+
+        "trained_schema_fields":
+            trained_count,
+
+        "auto_dynamic_fields":
+            dynamic_count,
+
+        "resolved_fields":
+            resolved_count,
+
+        "unresolved_fields":
+            unresolved_count,
+    }
+
+
+def _unified_runtime_info(
+    production_result,
+    auto_result,
+):
+    """
+    Build final runtime metadata without changing any of
+    the underlying production inference information.
+    """
+
+    runtime = {}
+
+    if isinstance(
+        production_result,
+        dict,
+    ):
+        original_runtime = (
+            production_result.get(
+                "runtime"
+            )
+        )
+
+        if isinstance(
+            original_runtime,
+            dict,
+        ):
+            runtime.update(
+                _unified_deepcopy(
+                    original_runtime
+                )
+            )
+
+    runtime.update(
+        {
+            "model":
+                UNIFIED_MODEL_NAME,
+
+            "model_architecture":
+                (
+                    "LayoutLMv3ForTokenClassification"
+                ),
+
+            "trained_schema_field_count":
+                len(
+                    EXPECTED_FIELDS
+                ),
+
+            "dynamic_schema_mode":
+                (
+                    "AUTOMATIC_SCHEMA_DISCOVERY"
+                ),
+
+            "inference_mode":
+                UNIFIED_INFERENCE_MODE,
+
+            "manual_field_input":
+                False,
+
+            "frontend_schema_definition":
+                False,
+
+            "dynamic_field_discovery":
+                True,
+
+            "training":
+                False,
+        }
+    )
+
+    if isinstance(
+        auto_result,
+        dict,
+    ):
+        quality_layer = (
+            auto_result.get(
+                "runtime_quality_layer"
+            )
+        )
+
+        if quality_layer:
+            runtime[
+                "runtime_quality_layer"
+            ] = quality_layer
+
+    return runtime
+
+
+def process_invoice_dynamic_final(
+    input_path,
+    *,
+    min_dynamic_confidence=
+        DYNAMIC_MIN_CONFIDENCE,
+):
+    """
+    ==========================================================
+    INVOICE AI V3 ? FINAL UNIFIED INFERENCE ENTRY POINT
+    ==========================================================
+
+    Executes the complete production system:
+
+        Invoice
+          |
+          v
+        LayoutLMv3
+        trained 16-field extraction
+          |
+          v
+        V3/V4/V5/V6/V6.1/V7
+        runtime reconciliation
+          |
+          v
+        automatic field discovery
+          |
+          v
+        automatic dynamic extraction
+          |
+          v
+        ONE merged field dictionary
+          |
+          v
+        ONE final JSON result
+
+
+    IMPORTANT:
+
+    This function does NOT retrain LayoutLMv3 and does NOT
+    modify model weights.
+
+    The LayoutLMv3 neural schema remains the fixed trained
+    16 fields.
+
+    Additional invoice parameters are discovered and
+    extracted automatically by the production inference
+    engine and are merged into the same final `fields`
+    dictionary.
+
+    No frontend parameter list is required.
+    No manually requested fields are required.
+    ==========================================================
+    """
+
+    # --------------------------------------------------------
+    # EXISTING FULL WORKING PIPELINE
+    # --------------------------------------------------------
+
+    auto_result = (
+        process_invoice_auto_dynamic(
+            input_path,
+            min_dynamic_confidence=
+                min_dynamic_confidence,
+        )
+    )
+
+    if not isinstance(
+        auto_result,
+        dict,
+    ):
+        raise RuntimeError(
+            "process_invoice_auto_dynamic() "
+            "did not return a dictionary."
+        )
+
+    production_result = (
+        auto_result.get(
+            "production_result"
+        )
+    )
+
+    if not isinstance(
+        production_result,
+        dict,
+    ):
+        production_result = {}
+
+    dynamic_fields = (
+        auto_result.get(
+            "dynamic_fields"
+        )
+    )
+
+    if not isinstance(
+        dynamic_fields,
+        dict,
+    ):
+        dynamic_fields = {}
+
+    # --------------------------------------------------------
+    # ONE UNIFIED FIELD MAP
+    # --------------------------------------------------------
+
+    combined_fields = (
+        _unified_merge_fields(
+            production_result,
+            dynamic_fields,
+        )
+    )
+
+    counts = (
+        _unified_field_counts(
+            combined_fields
+        )
+    )
+
+    # --------------------------------------------------------
+    # DOCUMENT
+    # --------------------------------------------------------
+
+    document = (
+        _unified_deepcopy(
+            production_result.get(
+                "document",
+                {},
+            )
+        )
+    )
+
+    # --------------------------------------------------------
+    # FINAL TOP-LEVEL STATUS
+    # --------------------------------------------------------
+
+    validation = (
+        _unified_deepcopy(
+            production_result.get(
+                "validation",
+                {},
+            )
+        )
+    )
+
+    status = None
+
+    if isinstance(
+        validation,
+        dict,
+    ):
+        status = (
+            validation.get(
+                "overall_status"
+            )
+        )
+
+    if not status:
+        if isinstance(
+            document,
+            dict,
+        ):
+            status = document.get(
+                "status"
+            )
+
+    if not status:
+        status = "COMPLETED"
+
+    # --------------------------------------------------------
+    # FINAL UNIFIED JSON
+    # --------------------------------------------------------
+
+    unified_result = {
+        "schema_version":
+            UNIFIED_SCHEMA_VERSION,
+
+        "model":
+            UNIFIED_MODEL_NAME,
+
+        "status":
+            status,
+
+        "document":
+            document,
+
+        # ====================================================
+        # THIS IS THE MERGER
+        # ====================================================
+        #
+        # Trained + dynamic fields now live together here.
+        #
+        "fields":
+            combined_fields,
+
+        "field_summary":
+            counts,
+
+        "trained_schema_fields":
+            list(
+                EXPECTED_FIELDS
+            ),
+
+        "auto_discovered_parameters":
+            _unified_deepcopy(
+                auto_result.get(
+                    "auto_discovered_parameters",
+                    list(
+                        dynamic_fields.keys()
+                    ),
+                )
+            ),
+
+        "line_items":
+            _unified_deepcopy(
+                production_result.get(
+                    "line_items",
+                    [],
+                )
+            ),
+
+        "normalized":
+            _unified_deepcopy(
+                production_result.get(
+                    "normalized",
+                    {},
+                )
+            ),
+
+        "tax_details":
+            _unified_deepcopy(
+                production_result.get(
+                    "tax_details",
+                    {},
+                )
+            ),
+
+        "identifiers":
+            _unified_deepcopy(
+                production_result.get(
+                    "identifiers",
+                    {},
+                )
+            ),
+
+        "financial_details":
+            _unified_deepcopy(
+                production_result.get(
+                    "financial_details",
+                    {},
+                )
+            ),
+
+        "validation":
+            validation,
+
+        "extraction_summary":
+            _unified_deepcopy(
+                production_result.get(
+                    "extraction_summary",
+                    {},
+                )
+            ),
+
+        "runtime":
+            _unified_runtime_info(
+                production_result,
+                auto_result,
+            ),
+    }
+
+    # Preserve selected production audit information.
+    for optional_key in (
+        "v6_audit",
+        "adjustments",
+        "round_off",
+    ):
+
+        if optional_key in production_result:
+
+            unified_result[
+                optional_key
+            ] = _unified_deepcopy(
+                production_result[
+                    optional_key
+                ]
+            )
+
+    return unified_result
+
+
+# ------------------------------------------------------------
+# CLEAN PUBLIC ALIASES
+# ------------------------------------------------------------
+
+
+def process_invoice_unified(
+    input_path,
+    *,
+    min_dynamic_confidence=
+        DYNAMIC_MIN_CONFIDENCE,
+):
+    """
+    Short alias for the final unified production engine.
+    """
+
+    return process_invoice_dynamic_final(
+        input_path,
+        min_dynamic_confidence=
+            min_dynamic_confidence,
+    )
+
+
+def process_invoice_latest(
+    input_path,
+    *,
+    min_dynamic_confidence=
+        DYNAMIC_MIN_CONFIDENCE,
+):
+    """
+    Latest production alias.
+
+    Useful when sharing the engine internally without
+    exposing implementation/version names.
+    """
+
+    return process_invoice_dynamic_final(
+        input_path,
+        min_dynamic_confidence=
+            min_dynamic_confidence,
+    )
+
+
+# ============================================================
+# END INVOICE AI V3 ? UNIFIED DYNAMIC PRODUCTION LAYER
+# ============================================================
