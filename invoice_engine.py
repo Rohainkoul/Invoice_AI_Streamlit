@@ -8443,21 +8443,36 @@ _V8_NOT_DETECTED_VALUES = {
 _V8_BAD_DYNAMIC_VALUES = {
     "date",
     "description",
+    "item description",
+    "material description",
+    "material",
+    "material code",
     "amount",
+    "line amount",
     "qty",
     "quantity",
     "rate",
+    "unit price",
     "unit",
     "uom",
     "remarks",
     "remark",
     "basic total",
     "subtotal",
+    "sub total",
     "total",
+    "grand total",
+    "bill amount",
+    "invoice total",
     "tax",
     "cgst",
     "sgst",
     "igst",
+    "hsn",
+    "sac",
+    "sl",
+    "sl no",
+    "serial no",
 }
 
 
@@ -9588,40 +9603,55 @@ def _v81_rebuild_line_items(
 
 def _v81_safe_adjustments(
     production_result,
+    dynamic_fields=None,
 ):
 
     """
-    Runtime summary extraction may accidentally classify rollup
-    rows such as GST Taxable Base and Total Tax as adjustments.
+    V8.4 financial adjustment consolidation.
 
-    Keep genuine plus/minus invoice adjustments only.
+    Recover genuine invoice adjustments from trusted runtime
+    layers while rejecting subtotal/tax/rollup rows.
     """
 
-    details = (
-        production_result.get(
-            "financial_details"
-        )
-    )
-
-    if not isinstance(
-        details,
-        dict,
-    ):
+    if not isinstance(production_result, dict):
         return []
 
-    adjustments = (
-        details.get(
-            "adjustments"
-        )
+    details = production_result.get(
+        "financial_details"
     )
 
-    if not isinstance(
-        adjustments,
-        list,
-    ):
-        adjustments = []
+    if not isinstance(details, dict):
+        details = {}
+        production_result[
+            "financial_details"
+        ] = details
 
-    safe = []
+    fields = production_result.get(
+        "fields",
+        {},
+    )
+
+    trained_discount = None
+
+    if isinstance(fields, dict):
+
+        discount_info = fields.get(
+            "DISCOUNT"
+        )
+
+        if isinstance(
+            discount_info,
+            dict,
+        ):
+            trained_discount = _v7_number(
+                discount_info.get(
+                    "value"
+                )
+            )
+        else:
+            trained_discount = _v7_number(
+                discount_info
+            )
 
     reject_patterns = (
         "gst taxable base",
@@ -9637,28 +9667,58 @@ def _v81_safe_adjustments(
         "grand total",
         "bill amount",
         "invoice total",
+        "total amount",
+        "amount in words",
+        "total value in words",
     )
 
-    allow_patterns = (
+    dynamic_allow_patterns = (
         "discount",
+        "rebate",
+        "deduction",
         "freight",
+        "carriage",
         "packing",
         "forwarding",
         "shipping",
         "handling",
         "insurance",
         "surcharge",
+        "process charge",
+        "process charges",
+        "stitching charge",
+        "stitching charges",
+        "job work",
+        "jobwork",
+        "knitting",
+        "fiber",
+        "fibre",
         "other charge",
         "other charges",
+        "loading charge",
+        "unloading charge",
+        "transport charge",
+        "transportation charge",
     )
 
-    for item in adjustments:
+    negative_label_patterns = (
+        "discount",
+        "rebate",
+        "deduction",
+    )
+
+    candidates = []
+
+    def add_candidate(
+        item,
+        trusted=False,
+    ):
 
         if not isinstance(
             item,
             dict,
         ):
-            continue
+            return
 
         label = re.sub(
             r"\s+",
@@ -9668,44 +9728,314 @@ def _v81_safe_adjustments(
                     "label",
                     "",
                 )
+                or
+                ""
             ),
         ).strip()
 
-        key = (
-            label.casefold()
-        )
+        if not label:
+            return
+
+        key = label.casefold()
 
         if any(
-            pattern
-            in
-            key
+            pattern in key
             for pattern
             in reject_patterns
         ):
-            continue
+            return
 
-        if not any(
-            pattern
-            in
-            key
-            for pattern
-            in allow_patterns
+        source = str(
+            item.get(
+                "source",
+                "",
+            )
+            or
+            ""
+        ).strip()
+
+        is_runtime_summary = (
+            source.upper().startswith(
+                "SUMMARY_ADJUSTMENT"
+            )
+        )
+
+        if not (
+            trusted
+            or
+            is_runtime_summary
+            or
+            any(
+                pattern in key
+                for pattern
+                in dynamic_allow_patterns
+            )
         ):
-            continue
+            return
 
-        amount = (
-            _v7_number(
+        amount = _v7_number(
+            item.get(
+                "amount"
+            )
+        )
+
+        if amount is None:
+            amount = _v7_number(
                 item.get(
-                    "amount"
+                    "value"
                 )
+            )
+
+        if amount is None:
+            return
+
+        if (
+            trained_discount
+            is not None
+            and
+            any(
+                pattern in key
+                for pattern
+                in negative_label_patterns
+            )
+        ):
+            return
+
+        if (
+            amount > 0
+            and
+            any(
+                pattern in key
+                for pattern
+                in negative_label_patterns
+            )
+        ):
+            amount = -abs(
+                amount
+            )
+
+        normalized_item = dict(
+            item
+        )
+
+        normalized_item[
+            "label"
+        ] = label
+
+        normalized_item[
+            "amount"
+        ] = round(
+            float(amount),
+            2,
+        )
+
+        if not normalized_item.get(
+            "source"
+        ):
+            normalized_item[
+                "source"
+            ] = (
+                "V8_4_ADJUSTMENT_RECOVERY"
+            )
+
+        candidates.append(
+            normalized_item
+        )
+
+    existing = details.get(
+        "adjustments",
+        [],
+    )
+
+    if isinstance(
+        existing,
+        list,
+    ):
+        for item in existing:
+            add_candidate(
+                item,
+                trusted=True,
+            )
+
+    top_level = production_result.get(
+        "adjustments",
+        [],
+    )
+
+    if isinstance(
+        top_level,
+        list,
+    ):
+        for item in top_level:
+            add_candidate(
+                item,
+                trusted=True,
+            )
+
+    audit = production_result.get(
+        "v6_audit",
+        {},
+    )
+
+    if isinstance(
+        audit,
+        dict,
+    ):
+
+        audit_adjustments = (
+            audit.get(
+                "adjustments",
+                [],
+            )
+        )
+
+        if isinstance(
+            audit_adjustments,
+            list,
+        ):
+            for item in audit_adjustments:
+                add_candidate(
+                    item,
+                    trusted=True,
+                )
+
+    if isinstance(
+        dynamic_fields,
+        dict,
+    ):
+
+        for (
+            label,
+            info,
+        ) in dynamic_fields.items():
+
+            key = re.sub(
+                r"\s+",
+                " ",
+                str(
+                    label
+                ).casefold(),
+            ).strip()
+
+            if not any(
+                pattern in key
+                for pattern
+                in dynamic_allow_patterns
+            ):
+                continue
+
+            if isinstance(
+                info,
+                dict,
+            ):
+
+                status = str(
+                    info.get(
+                        "status",
+                        "",
+                    )
+                    or
+                    ""
+                ).upper()
+
+                if status in {
+                    "NOT_PRESENT",
+                    "NOT_DETECTED",
+                    "AMBIGUOUS",
+                    "NO_EVIDENCE",
+                }:
+                    continue
+
+                candidate = {
+                    "label":
+                        str(label),
+
+                    "amount":
+                        info.get(
+                            "value"
+                        ),
+
+                    "page":
+                        info.get(
+                            "page"
+                        ),
+
+                    "row_text":
+                        info.get(
+                            "evidence"
+                        ),
+
+                    "source":
+                        "V8_4_DYNAMIC_ADJUSTMENT",
+                }
+
+            else:
+
+                candidate = {
+                    "label":
+                        str(label),
+
+                    "amount":
+                        info,
+
+                    "source":
+                        "V8_4_DYNAMIC_ADJUSTMENT",
+                }
+
+            add_candidate(
+                candidate,
+                trusted=False,
+            )
+
+    safe = []
+    seen = set()
+
+    for item in candidates:
+
+        label_key = re.sub(
+            r"[^a-z0-9]+",
+            " ",
+            str(
+                item.get(
+                    "label",
+                    "",
+                )
+            ).casefold(),
+        ).strip()
+
+        amount = _v7_number(
+            item.get(
+                "amount"
             )
         )
 
         if amount is None:
             continue
 
+        signature = (
+            label_key,
+            round(
+                float(amount),
+                2,
+            ),
+        )
+
+        if signature in seen:
+            continue
+
+        seen.add(
+            signature
+        )
+
+        item[
+            "amount"
+        ] = round(
+            float(amount),
+            2,
+        )
+
         safe.append(
-            dict(item)
+            item
         )
 
     details[
@@ -9731,6 +10061,14 @@ def _v81_safe_adjustments(
         2,
     )
 
+    production_result[
+        "adjustments"
+    ] = [
+        dict(item)
+        for item
+        in safe
+    ]
+
     return safe
 
 
@@ -9739,8 +10077,8 @@ def _v81_reconcile_validation(
 ):
 
     """
-    Recompute financial + GST + line-item validation from final
-    trusted values after V8.1 repairs.
+    V8.4 final reconciliation with trained discount,
+    recovered adjustments and round-off support.
     """
 
     if not isinstance(
@@ -9749,11 +10087,9 @@ def _v81_reconcile_validation(
     ):
         return
 
-    fields = (
-        production_result.get(
-            "fields",
-            {}
-        )
+    fields = production_result.get(
+        "fields",
+        {},
     )
 
     if not isinstance(
@@ -9762,9 +10098,7 @@ def _v81_reconcile_validation(
     ):
         return
 
-    def field_number(
-        name,
-    ):
+    def field_number(name):
 
         information = fields.get(
             name
@@ -9774,7 +10108,6 @@ def _v81_reconcile_validation(
             information,
             dict,
         ):
-
             return _v7_number(
                 information.get(
                     "value"
@@ -9785,6 +10118,27 @@ def _v81_reconcile_validation(
             information
         )
 
+    def field_status(name):
+
+        information = fields.get(
+            name
+        )
+
+        if isinstance(
+            information,
+            dict,
+        ):
+            return str(
+                information.get(
+                    "status",
+                    "",
+                )
+                or
+                ""
+            ).upper()
+
+        return ""
+
     subtotal = field_number(
         "SUBTOTAL"
     )
@@ -9793,19 +10147,22 @@ def _v81_reconcile_validation(
         "TAX"
     )
 
+    discount = field_number(
+        "DISCOUNT"
+    )
+
     total = field_number(
         "TOTAL_AMOUNT"
     )
 
-    details = (
-        production_result.get(
-            "financial_details",
-            {}
-        )
+    details = production_result.get(
+        "financial_details",
+        {},
     )
 
     adjustment_total = 0.0
     round_off = 0.0
+    adjustments = []
 
     if isinstance(
         details,
@@ -9822,17 +10179,25 @@ def _v81_reconcile_validation(
             0.0
         )
 
-        round_info = (
-            details.get(
-                "round_off"
-            )
+        adjustments = details.get(
+            "adjustments",
+            [],
+        )
+
+        if not isinstance(
+            adjustments,
+            list,
+        ):
+            adjustments = []
+
+        round_info = details.get(
+            "round_off"
         )
 
         if isinstance(
             round_info,
             dict,
         ):
-
             round_off = (
                 _v7_number(
                     round_info.get(
@@ -9842,11 +10207,64 @@ def _v81_reconcile_validation(
                 or
                 0.0
             )
+        else:
+            round_off = (
+                _v7_number(
+                    round_info
+                )
+                or
+                0.0
+            )
 
-    validation = (
-        production_result.get(
-            "validation"
+    adjustment_has_discount = any(
+        any(
+            token in str(
+                item.get(
+                    "label",
+                    "",
+                )
+            ).casefold()
+            for token in (
+                "discount",
+                "rebate",
+                "deduction",
+            )
         )
+        for item in adjustments
+        if isinstance(
+            item,
+            dict,
+        )
+    )
+
+    discount_effect = 0.0
+
+    if (
+        discount is not None
+        and
+        not adjustment_has_discount
+    ):
+        discount_effect = -abs(
+            float(discount)
+        )
+
+    tax_for_math = tax
+
+    if tax_for_math is None:
+
+        tax_status = field_status(
+            "TAX"
+        )
+
+        if tax_status in {
+            "NOT_PRESENT",
+            "NOT_DETECTED",
+            "NO_EVIDENCE",
+        }:
+            tax_for_math = 0.0
+
+    validation = production_result.get(
+        "validation"
     )
 
     if not isinstance(
@@ -9855,10 +10273,8 @@ def _v81_reconcile_validation(
     ):
         return
 
-    financial = (
-        validation.get(
-            "financial_reconciliation"
-        )
+    financial = validation.get(
+        "financial_reconciliation"
     )
 
     financial_pass = None
@@ -9877,12 +10293,29 @@ def _v81_reconcile_validation(
         ] = tax
 
         financial[
+            "discount"
+        ] = discount
+
+        financial[
+            "discount_effect"
+        ] = round(
+            discount_effect,
+            2,
+        )
+
+        financial[
             "adjustments_total"
-        ] = adjustment_total
+        ] = round(
+            adjustment_total,
+            2,
+        )
 
         financial[
             "round_off"
-        ] = round_off
+        ] = round(
+            round_off,
+            2,
+        )
 
         financial[
             "total_amount"
@@ -9891,7 +10324,7 @@ def _v81_reconcile_validation(
         if (
             subtotal is not None
             and
-            tax is not None
+            tax_for_math is not None
             and
             total is not None
         ):
@@ -9899,9 +10332,11 @@ def _v81_reconcile_validation(
             calculated = round(
                 subtotal
                 +
-                adjustment_total
+                tax_for_math
                 +
-                tax
+                discount_effect
+                +
+                adjustment_total
                 +
                 round_off,
                 2,
@@ -9934,14 +10369,8 @@ def _v81_reconcile_validation(
                 "passed"
             ] = financial_pass
 
-    # --------------------------------------------------------
-    # GST validation
-    # --------------------------------------------------------
-
-    gst = (
-        validation.get(
-            "gst_reconciliation"
-        )
+    gst = validation.get(
+        "gst_reconciliation"
     )
 
     gst_pass = None
@@ -9951,20 +10380,16 @@ def _v81_reconcile_validation(
         dict,
     ):
 
-        component_sum = (
-            _v7_number(
-                gst.get(
-                    "component_sum"
-                )
+        component_sum = _v7_number(
+            gst.get(
+                "component_sum"
             )
         )
 
         if (
-            component_sum
-            is not None
+            component_sum is not None
             and
-            tax
-            is not None
+            tax is not None
         ):
 
             gst_difference = round(
@@ -9990,22 +10415,16 @@ def _v81_reconcile_validation(
                 "matches_tax_total"
             ] = gst_pass
 
-    # --------------------------------------------------------
-    # Line-item reconciliation
-    # --------------------------------------------------------
-
-    line_items = (
-        production_result.get(
-            "line_items",
-            []
-        )
+    line_items = production_result.get(
+        "line_items",
+        [],
     )
 
-    line_validation = (
-        validation.get(
-            "line_item_reconciliation"
-        )
+    line_validation = validation.get(
+        "line_item_reconciliation"
     )
+
+    line_pass = None
 
     if (
         isinstance(
@@ -10020,7 +10439,6 @@ def _v81_reconcile_validation(
     ):
 
         amounts = []
-
         quantities = []
 
         for item in line_items:
@@ -10031,22 +10449,18 @@ def _v81_reconcile_validation(
             ):
                 continue
 
-            amount = (
-                _v7_number(
-                    item.get(
-                        "line_amount"
-                    )
+            amount = _v7_number(
+                item.get(
+                    "line_amount"
                 )
             )
 
-            quantity = (
-                _v7_number(
+            quantity = _v7_number(
+                item.get(
+                    "quantity_numeric",
                     item.get(
-                        "quantity_numeric",
-                        item.get(
-                            "quantity"
-                        ),
-                    )
+                        "quantity"
+                    ),
                 )
             )
 
@@ -10070,26 +10484,17 @@ def _v81_reconcile_validation(
             None
         )
 
-        line_validation[
-            "row_count"
-        ] = len(
-            line_items
-        )
-
-        line_validation[
-            "total_quantity"
-        ] = (
-            sum(
-                quantities
+        total_quantity = (
+            round(
+                sum(quantities),
+                4,
             )
             if quantities
             else
             None
         )
 
-        line_validation[
-            "line_amount_sum"
-        ] = line_sum
+        line_difference = None
 
         if (
             line_sum is not None
@@ -10104,127 +10509,101 @@ def _v81_reconcile_validation(
                 2,
             )
 
-            line_validation[
-                "difference"
-            ] = line_difference
-
-            line_validation[
-                "matches_subtotal"
-            ] = (
+            line_pass = (
                 abs(
                     line_difference
                 )
                 <=
-                0.05
+                0.50
             )
 
-    # --------------------------------------------------------
-    # Remove stale failure flags when the repaired validation
-    # now proves the invoice correct.
-    # --------------------------------------------------------
+        line_validation[
+            "row_count"
+        ] = len(
+            [
+                item
+                for item
+                in line_items
+                if isinstance(
+                    item,
+                    dict,
+                )
+            ]
+        )
 
-    flags = (
-        validation.get(
-            "quality_flags"
+        line_validation[
+            "total_quantity"
+        ] = total_quantity
+
+        line_validation[
+            "line_amount_sum"
+        ] = line_sum
+
+        line_validation[
+            "matches_subtotal"
+        ] = line_pass
+
+        line_validation[
+            "difference"
+        ] = line_difference
+
+    hard_failure = any(
+        value is False
+        for value in (
+            financial_pass,
+            gst_pass,
+            line_pass,
         )
     )
 
-    if not isinstance(
-        flags,
-        list,
-    ):
-        flags = []
-
-    cleaned_flags = []
-
-    for flag in flags:
-
-        flag_text = str(
-            flag
-        ).strip()
-
-        if (
-            flag_text
-            ==
-            "FINANCIAL_RECONCILIATION_FAILED"
-            and
-            financial_pass
-            is True
-        ):
-            continue
-
-        if (
-            flag_text
-            ==
-            "GST_RECONCILIATION_FAILED"
-            and
-            gst_pass
-            is True
-        ):
-            continue
-
-        cleaned_flags.append(
-            flag_text
-        )
-
-    validation[
-        "quality_flags"
-    ] = cleaned_flags
-
-    core_pass = bool(
-        validation.get(
-            "core_fields_pass",
-            True,
-        )
-    )
-
-    if (
-        core_pass
-        and
-        financial_pass
-        is not False
-        and
-        gst_pass
-        is not False
-        and
-        not cleaned_flags
-    ):
-
-        validation[
-            "overall_status"
-        ] = "PASS"
-
-    elif not core_pass:
+    if hard_failure:
 
         validation[
             "overall_status"
         ] = "REVIEW_REQUIRED"
 
-    document = (
-        production_result.get(
-            "document"
-        )
-    )
-
-    if isinstance(
-        document,
-        dict,
-    ):
-
-        document[
+        production_result[
             "status"
-        ] = validation.get(
-            "overall_status",
-            document.get(
-                "status"
-            ),
-        )
+        ] = "REVIEW_REQUIRED"
 
+    else:
 
+        current = str(
+            validation.get(
+                "overall_status",
+                "",
+            )
+            or
+            ""
+        ).upper()
 
-# ============================================================
-# V8.2 FINAL STRESS-TEST PRECISION LAYER
-# ============================================================
+        if current not in {
+            "FAIL",
+            "FAILED",
+            "REVIEW_REQUIRED",
+        }:
+
+            validation[
+                "overall_status"
+            ] = "PASS"
+
+            if str(
+                production_result.get(
+                    "status",
+                    "",
+                )
+                or
+                ""
+            ).upper() not in {
+                "FAIL",
+                "FAILED",
+                "REVIEW_REQUIRED",
+            }:
+
+                production_result[
+                    "status"
+                ] = "PASS"
+
 
 def _v82_repair_customer_name(
     input_path,
@@ -10782,6 +11161,462 @@ def _v82_sync_recovered_metadata(
 # ============================================================
 
 
+
+# ============================================================
+# V8.4 PRIORITY 2
+# FINAL DYNAMIC FALSE-POSITIVE FILTER
+# ============================================================
+
+def _v84_filter_dynamic_false_positives(
+    dynamic_fields,
+):
+
+    """
+    Conservative dynamic-output precision layer.
+
+    Removes obvious structural/table/address artifacts while
+    preserving legitimate automatically discovered business
+    identifiers and explicitly recovered fields.
+
+    No trained-schema changes.
+    No model changes.
+    """
+
+    if not isinstance(
+        dynamic_fields,
+        dict,
+    ):
+        return {}
+
+    structural_values = {
+        "",
+        "date",
+        "description",
+        "item description",
+        "material description",
+        "material",
+        "material code",
+        "quantity",
+        "qty",
+        "rate",
+        "unit price",
+        "amount",
+        "line amount",
+        "unit",
+        "uom",
+        "hsn",
+        "sac",
+        "remarks",
+        "remark",
+        "subtotal",
+        "sub total",
+        "total",
+        "grand total",
+        "bill amount",
+        "invoice total",
+        "tax",
+        "cgst",
+        "sgst",
+        "igst",
+        "sl",
+        "sl no",
+        "serial no",
+    }
+
+    identifier_fields = {
+        "po number",
+        "purchase order number",
+        "purchase order",
+        "gr number",
+        "goods receipt number",
+        "odn number",
+        "reference number",
+        "delivery challan number",
+        "challan number",
+        "vehicle number",
+        "eway bill number",
+        "e way bill number",
+        "ack number",
+        "acknowledgement number",
+        "account number",
+        "bank account number",
+        "lot",
+    }
+
+    # Generic address fragments should not become arbitrary
+    # dynamic schema fields merely because they contain "No".
+    address_fragment_tokens = {
+        "shop",
+        "floor",
+        "block",
+        "market",
+        "road",
+        "street",
+        "lane",
+        "building",
+        "plot",
+        "house",
+        "sector",
+        "village",
+        "district",
+        "taluk",
+        "taluka",
+        "pincode",
+        "pin",
+        "postal",
+    }
+
+    # Explicit invoice/business fields that may legitimately
+    # contain words which overlap with location terminology.
+    protected_names = {
+        "state code",
+        "state name",
+        "place of supply",
+        "gstin",
+        "customer gstin",
+        "transporter gstin",
+        "cin",
+        "pan",
+        "ifsc",
+        "ifsc code",
+        "email",
+        "phone number",
+        "posting date",
+        "hsn code",
+        "po number",
+        "purchase order number",
+        "gr number",
+        "odn number",
+        "eway bill number",
+        "e way bill number",
+        "vehicle number",
+        "payment mode",
+        "bank name",
+        "bank account number",
+        "account number",
+        "lot",
+        "irn",
+        "ack number",
+        "acknowledgement number",
+        "cgst",
+        "sgst",
+        "igst",
+        "freight charges",
+        "round off",
+        "total value in words",
+        "amount in words",
+    }
+
+    remove_keys = []
+
+    for (
+        field_name,
+        information,
+    ) in list(
+        dynamic_fields.items()
+    ):
+
+        name_key = re.sub(
+            r"[^a-z0-9]+",
+            " ",
+            str(
+                field_name
+            ).casefold(),
+        ).strip()
+
+        if not name_key:
+            remove_keys.append(
+                field_name
+            )
+            continue
+
+        if isinstance(
+            information,
+            dict,
+        ):
+
+            value = information.get(
+                "value"
+            )
+
+            status = str(
+                information.get(
+                    "status",
+                    "",
+                )
+                or
+                ""
+            ).upper()
+
+            source = str(
+                information.get(
+                    "source",
+                    "",
+                )
+                or
+                ""
+            ).upper()
+
+        else:
+
+            value = information
+            status = ""
+            source = ""
+
+        value_key = re.sub(
+            r"\s+",
+            " ",
+            str(
+                value
+                if value is not None
+                else ""
+            ),
+        ).strip().casefold()
+
+        # ----------------------------------------------------
+        # Rule 1:
+        # Obvious table/header text cannot be a detected value.
+        # ----------------------------------------------------
+
+        if value_key in structural_values:
+
+            if isinstance(
+                information,
+                dict,
+            ):
+
+                information[
+                    "value"
+                ] = "NOT_DETECTED"
+
+                information[
+                    "status"
+                ] = "AMBIGUOUS"
+
+                information[
+                    "confidence"
+                ] = min(
+                    float(
+                        information.get(
+                            "confidence",
+                            0.0,
+                        )
+                        or
+                        0.0
+                    ),
+                    0.49,
+                )
+
+                information[
+                    "source"
+                ] = (
+                    "V8_4_DYNAMIC_STRUCTURE_REJECT"
+                )
+
+            continue
+
+        # ----------------------------------------------------
+        # Rule 2:
+        # Identifier fields must look like identifiers.
+        #
+        # Require at least one digit. This rejects:
+        #
+        #   PO Number -> MATERIAL
+        #
+        # while preserving:
+        #
+        #   PO Number -> 190260318
+        #   PO Number -> PO-2026/1044
+        # ----------------------------------------------------
+
+        if (
+            name_key
+            in identifier_fields
+            and
+            status
+            not in {
+                "NOT_PRESENT",
+                "NOT_DETECTED",
+                "AMBIGUOUS",
+                "NO_EVIDENCE",
+            }
+        ):
+
+            if not any(
+                character.isdigit()
+                for character
+                in str(
+                    value
+                    if value is not None
+                    else ""
+                )
+            ):
+
+                if isinstance(
+                    information,
+                    dict,
+                ):
+
+                    information[
+                        "value"
+                    ] = "NOT_DETECTED"
+
+                    information[
+                        "status"
+                    ] = "AMBIGUOUS"
+
+                    information[
+                        "confidence"
+                    ] = min(
+                        float(
+                            information.get(
+                                "confidence",
+                                0.0,
+                            )
+                            or
+                            0.0
+                        ),
+                        0.49,
+                    )
+
+                    information[
+                        "source"
+                    ] = (
+                        "V8_4_IDENTIFIER_VALUE_REJECT"
+                    )
+
+                continue
+
+        # ----------------------------------------------------
+        # Rule 3:
+        # Remove address fragments discovered as arbitrary
+        # dynamic labels.
+        #
+        # Example:
+        #   SHOP NO
+        #   CLOTH MARKETBLOCK NO
+        #
+        # Only applies to unprotected generic labels.
+        # ----------------------------------------------------
+
+        if (
+            name_key
+            not in protected_names
+        ):
+
+            name_tokens = set(
+                name_key.split()
+            )
+
+            has_address_token = bool(
+                name_tokens.intersection(
+                    address_fragment_tokens
+                )
+            )
+
+            has_generic_number_token = bool(
+                name_tokens.intersection(
+                    {
+                        "no",
+                        "number",
+                    }
+                )
+            )
+
+            if (
+                has_address_token
+                and
+                has_generic_number_token
+            ):
+
+                remove_keys.append(
+                    field_name
+                )
+
+                continue
+
+        # ----------------------------------------------------
+        # Rule 4:
+        # Obvious structural evidence should not support an
+        # identifier unless an explicit V8.2 context recovery
+        # supplied it.
+        # ----------------------------------------------------
+
+        if (
+            name_key
+            in identifier_fields
+            and
+            source
+            not in {
+                "V8_2_EXPLICIT_CONTEXT",
+                "V8_4_EXPLICIT_CONTEXT",
+            }
+            and
+            isinstance(
+                information,
+                dict,
+            )
+        ):
+
+            evidence = str(
+                information.get(
+                    "evidence",
+                    "",
+                )
+                or
+                ""
+            ).strip().casefold()
+
+            if evidence in {
+                "material",
+                "material description",
+                "item description",
+                "description",
+                "quantity",
+                "qty",
+                "rate",
+                "amount",
+                "unit price",
+            }:
+
+                information[
+                    "value"
+                ] = "NOT_DETECTED"
+
+                information[
+                    "status"
+                ] = "AMBIGUOUS"
+
+                information[
+                    "confidence"
+                ] = min(
+                    float(
+                        information.get(
+                            "confidence",
+                            0.0,
+                        )
+                        or
+                        0.0
+                    ),
+                    0.49,
+                )
+
+                information[
+                    "source"
+                ] = (
+                    "V8_4_STRUCTURAL_EVIDENCE_REJECT"
+                )
+
+    for key in remove_keys:
+
+        dynamic_fields.pop(
+            key,
+            None,
+        )
+
+    return dynamic_fields
+
+
 def _v83_recover_phone_number(
     input_path,
     dynamic_fields,
@@ -10952,10 +11787,19 @@ def _v83_propagate_single_hsn(
 ):
 
     """
-    If one explicit HSN/SAC code applies to the whole invoice,
-    populate missing hsn_code values in structured line items.
+    V8.5 safe HSN reconciliation.
 
-    Existing non-empty HSN values are never overwritten.
+    Strategy:
+      1. Never overwrite an existing explicit HSN.
+      2. Detect whether structured material_code values actually
+         represent row-specific HSN codes.
+      3. If multiple distinct HSN-like row codes exist and the
+         dynamic HSN matches one of them, map row-by-row.
+      4. Propagate one global dynamic HSN only when there is no
+         conflicting row-level HSN evidence.
+
+    This prevents the old failure where one HSN was copied into
+    every row of an invoice containing different HSN codes.
     """
 
     if not isinstance(
@@ -10964,7 +11808,17 @@ def _v83_propagate_single_hsn(
     ):
         return
 
-    hsn = (
+    line_items = production_result.get(
+        "line_items"
+    )
+
+    if not isinstance(
+        line_items,
+        list,
+    ) or not line_items:
+        return
+
+    dynamic_hsn = (
         _v83_detected_dynamic_value(
             dynamic_fields,
             (
@@ -10977,32 +11831,1001 @@ def _v83_propagate_single_hsn(
         )
     )
 
-    if not hsn:
-        return
+    normalized_dynamic = None
 
-    normalized_hsn = re.sub(
-        r"\D",
+    if dynamic_hsn:
+
+        candidate = re.sub(
+            r"\D",
+            "",
+            str(dynamic_hsn),
+        )
+
+        if len(candidate) in {
+            4,
+            6,
+            8,
+        }:
+            normalized_dynamic = candidate
+
+    def valid_hsn(value):
+
+        digits = re.sub(
+            r"\D",
+            "",
+            str(
+                value
+                if value is not None
+                else ""
+            ),
+        )
+
+        if len(digits) in {
+            4,
+            6,
+            8,
+        }:
+            return digits
+
+        return None
+
+    missing_tokens = {
         "",
-        hsn,
+        "not_detected",
+        "not detected",
+        "none",
+        "null",
+    }
+
+    material_hsn_values = []
+
+    for item in line_items:
+
+        if not isinstance(
+            item,
+            dict,
+        ):
+            continue
+
+        material_candidate = valid_hsn(
+            item.get(
+                "material_code"
+            )
+        )
+
+        if material_candidate:
+            material_hsn_values.append(
+                material_candidate
+            )
+
+    distinct_material_hsn = set(
+        material_hsn_values
     )
 
-    if len(normalized_hsn) not in {
-        4,
-        6,
-        8,
-    }:
+    changed = False
+    row_aware = False
+
+    # --------------------------------------------------------
+    # Strong row-aware evidence:
+    #
+    # More than one different 4/6/8-digit code exists in the
+    # structured code column AND the discovered HSN is one of
+    # those codes.
+    #
+    # This is the NOVA-type case.
+    # --------------------------------------------------------
+
+    if (
+        normalized_dynamic
+        and
+        len(
+            distinct_material_hsn
+        )
+        >=
+        2
+        and
+        normalized_dynamic
+        in
+        distinct_material_hsn
+    ):
+
+        for item in line_items:
+
+            if not isinstance(
+                item,
+                dict,
+            ):
+                continue
+
+            current = str(
+                item.get(
+                    "hsn_code",
+                    "",
+                )
+                or
+                ""
+            ).strip().casefold()
+
+            if current not in missing_tokens:
+                continue
+
+            row_hsn = valid_hsn(
+                item.get(
+                    "material_code"
+                )
+            )
+
+            if not row_hsn:
+                continue
+
+            item[
+                "hsn_code"
+            ] = row_hsn
+
+            item[
+                "hsn_source"
+            ] = (
+                "V8_5_ROW_AWARE_CODE_MAPPING"
+            )
+
+            changed = True
+            row_aware = True
+
+    # --------------------------------------------------------
+    # Global HSN propagation is allowed only when no conflicting
+    # row-level HSN-like evidence exists.
+    # --------------------------------------------------------
+
+    elif normalized_dynamic:
+
+        conflicting_row_codes = (
+            len(
+                distinct_material_hsn
+            )
+            >=
+            2
+        )
+
+        if not conflicting_row_codes:
+
+            for item in line_items:
+
+                if not isinstance(
+                    item,
+                    dict,
+                ):
+                    continue
+
+                current = str(
+                    item.get(
+                        "hsn_code",
+                        "",
+                    )
+                    or
+                    ""
+                ).strip().casefold()
+
+                if current not in missing_tokens:
+                    continue
+
+                item[
+                    "hsn_code"
+                ] = normalized_dynamic
+
+                item[
+                    "hsn_source"
+                ] = (
+                    "V8_5_SAFE_GLOBAL_HSN"
+                )
+
+                changed = True
+
+    extraction = (
+        production_result.get(
+            "extraction_summary"
+        )
+    )
+
+    if (
+        changed
+        and
+        isinstance(
+            extraction,
+            dict,
+        )
+    ):
+
+        extraction[
+            "hsn_line_item_propagation"
+        ] = True
+
+        extraction[
+            "hsn_assignment_mode"
+        ] = (
+            "ROW_AWARE"
+            if row_aware
+            else
+            "SAFE_GLOBAL"
+        )
+
+
+
+# ============================================================
+# V8.5 PRIORITY 4
+# EXPLICIT COUNTERPARTY RECOVERY
+# ============================================================
+
+def _v85_name_key(
+    value,
+):
+
+    return re.sub(
+        r"[^a-z0-9]+",
+        " ",
+        str(
+            value
+            if value is not None
+            else ""
+        ).casefold(),
+    ).strip()
+
+
+def _v85_field_value(
+    production_result,
+    name,
+):
+
+    if not isinstance(
+        production_result,
+        dict,
+    ):
+        return None
+
+    fields = production_result.get(
+        "fields",
+        {},
+    )
+
+    if not isinstance(
+        fields,
+        dict,
+    ):
+        return None
+
+    information = fields.get(
+        name
+    )
+
+    if isinstance(
+        information,
+        dict,
+    ):
+        return information.get(
+            "value"
+        )
+
+    return information
+
+
+def _v85_missing_value(
+    value,
+):
+
+    return str(
+        value
+        if value is not None
+        else ""
+    ).strip().casefold() in {
+        "",
+        "not_detected",
+        "not detected",
+        "none",
+        "null",
+    }
+
+
+def _v85_recover_customer_name(
+    input_path,
+    production_result,
+):
+
+    """
+    Recover customer/buyer/consignee only from explicit document
+    anchors.
+
+    Unlike V8.2, company suffix words such as Pvt/Ltd are helpful
+    but not mandatory.
+
+    Existing good customer values are preserved.
+    """
+
+    if not isinstance(
+        production_result,
+        dict,
+    ):
         return
 
-    line_items = (
-        production_result.get(
-            "line_items"
+    current = _v85_field_value(
+        production_result,
+        "CUSTOMER_NAME",
+    )
+
+    vendor = _v85_field_value(
+        production_result,
+        "VENDOR_NAME",
+    )
+
+    current_key = _v85_name_key(
+        current
+    )
+
+    vendor_key = _v85_name_key(
+        vendor
+    )
+
+    current_missing = (
+        _v85_missing_value(
+            current
         )
+    )
+
+    current_is_vendor = False
+
+    if (
+        current_key
+        and
+        vendor_key
+    ):
+
+        current_is_vendor = (
+            difflib.SequenceMatcher(
+                None,
+                current_key,
+                vendor_key,
+            ).ratio()
+            >=
+            0.86
+        )
+
+    # Do not disturb an already-good, distinct customer.
+    if (
+        not current_missing
+        and
+        not current_is_vendor
+    ):
+        return
+
+    lines = _v81_document_lines(
+        input_path
+    )
+
+    anchor_pattern = re.compile(
+        r"(?i)"
+        r"\b("
+        r"bill(?:ed)?\s*to|"
+        r"buyer(?:\s*details)?|"
+        r"customer(?:\s*name|\s*details)?|"
+        r"consignee|"
+        r"ship\s*to"
+        r")\b"
+    )
+
+    stop_pattern = re.compile(
+        r"(?i)"
+        r"\b("
+        r"gstin|pan|cin|"
+        r"state\s*code|"
+        r"place\s*of\s*supply|"
+        r"invoice\s*(?:no|number)|"
+        r"po\s*(?:no|number)|"
+        r"address|"
+        r"phone|mobile|email"
+        r")\b"
+    )
+
+    candidates = []
+
+    for index, line in enumerate(
+        lines
+    ):
+
+        raw = re.sub(
+            r"\s+",
+            " ",
+            str(
+                line.get(
+                    "text",
+                    "",
+                )
+            ),
+        ).strip()
+
+        anchor_match = anchor_pattern.search(
+            raw
+        )
+
+        if not anchor_match:
+            continue
+
+        trailing = raw[
+            anchor_match.end():
+        ].strip(
+            " :-|"
+        )
+
+        local_candidates = []
+
+        if trailing:
+            local_candidates.append(
+                trailing
+            )
+
+        for next_index in range(
+            index + 1,
+            min(
+                index + 4,
+                len(lines),
+            ),
+        ):
+
+            next_text = re.sub(
+                r"\s+",
+                " ",
+                str(
+                    lines[
+                        next_index
+                    ].get(
+                        "text",
+                        "",
+                    )
+                ),
+            ).strip()
+
+            if next_text:
+                local_candidates.append(
+                    next_text
+                )
+
+        for candidate in local_candidates:
+
+            candidate = candidate.strip(
+                " :-|"
+            )
+
+            if len(candidate) < 3:
+                continue
+
+            if stop_pattern.search(
+                candidate
+            ):
+                continue
+
+            if _v81_is_probable_address(
+                candidate
+            ):
+                continue
+
+            if not re.search(
+                r"[A-Za-z]{3}",
+                candidate,
+            ):
+                continue
+
+            digit_count = sum(
+                character.isdigit()
+                for character
+                in candidate
+            )
+
+            if (
+                digit_count
+                >
+                max(
+                    3,
+                    len(candidate)
+                    // 3,
+                )
+            ):
+                continue
+
+            key = _v85_name_key(
+                candidate
+            )
+
+            if not key:
+                continue
+
+            if (
+                vendor_key
+                and
+                difflib.SequenceMatcher(
+                    None,
+                    key,
+                    vendor_key,
+                ).ratio()
+                >=
+                0.86
+            ):
+                continue
+
+            score = 0
+
+            score += min(
+                len(candidate),
+                80,
+            )
+
+            if re.search(
+                r"(?i)\b("
+                r"private|pvt|limited|ltd|"
+                r"enterprise|enterprises|"
+                r"industries|industrial|"
+                r"company|corporation|"
+                r"mills|textile|textiles|"
+                r"dyeing|traders|trading|"
+                r"agency|agencies|"
+                r"solutions|systems|"
+                r"transport"
+                r")\b",
+                candidate,
+            ):
+                score += 30
+
+            candidates.append(
+                (
+                    score,
+                    candidate,
+                )
+            )
+
+        # Prefer the first explicit customer block.
+        if candidates:
+            break
+
+    if not candidates:
+        return
+
+    candidates.sort(
+        key=lambda item: (
+            item[0],
+            len(item[1]),
+        ),
+        reverse=True,
+    )
+
+    best = candidates[0][1]
+
+    _v7_set_field(
+        production_result,
+        "CUSTOMER_NAME",
+        best,
+        source=
+            "V8_5_EXPLICIT_COUNTERPARTY",
+        status=
+            "RULE_RECOVERED",
+    )
+
+
+# ============================================================
+# V8.5 PRIORITY 5
+# ADDRESS RECONSTRUCTION / NORMALIZATION
+# ============================================================
+
+def _v85_address_compact(
+    value,
+):
+
+    return re.sub(
+        r"[^a-z0-9]+",
+        "",
+        str(
+            value
+            if value is not None
+            else ""
+        ).casefold(),
+    )
+
+
+def _v85_normalize_address(
+    input_path,
+    production_result,
+):
+
+    """
+    Reconstruct a concatenated ADDRESS using the original native
+    PDF line boundaries whenever the document provides sufficient
+    supporting evidence.
+
+    No invented address components are added.
+    """
+
+    if not isinstance(
+        production_result,
+        dict,
+    ):
+        return
+
+    current = _v85_field_value(
+        production_result,
+        "ADDRESS",
+    )
+
+    if _v85_missing_value(
+        current
+    ):
+        return
+
+    current = re.sub(
+        r"\s+",
+        " ",
+        str(current),
+    ).strip()
+
+    current = re.sub(
+        r",(?=\S)",
+        ", ",
+        current,
+    )
+
+    current_compact = (
+        _v85_address_compact(
+            current
+        )
+    )
+
+    if len(current_compact) < 8:
+        return
+
+    lines = _v81_document_lines(
+        input_path
+    )
+
+    reject = re.compile(
+        r"(?i)"
+        r"\b("
+        r"gstin|pan|cin|ifsc|"
+        r"invoice\s*(?:no|number)|"
+        r"po\s*(?:no|number)|"
+        r"taxable|cgst|sgst|igst|"
+        r"subtotal|grand\s*total|"
+        r"bill\s*amount|"
+        r"amount\s*in\s*words"
+        r")\b"
+    )
+
+    pieces = []
+    seen = set()
+
+    for line in lines:
+
+        candidate = re.sub(
+            r"\s+",
+            " ",
+            str(
+                line.get(
+                    "text",
+                    "",
+                )
+            ),
+        ).strip(
+            " ,;|"
+        )
+
+        if len(candidate) < 4:
+            continue
+
+        if reject.search(
+            candidate
+        ):
+            continue
+
+        compact = (
+            _v85_address_compact(
+                candidate
+            )
+        )
+
+        if len(compact) < 4:
+            continue
+
+        # Use only native lines whose content is genuinely part
+        # of the already-extracted address.
+        if compact not in current_compact:
+            continue
+
+        key = compact
+
+        if key in seen:
+            continue
+
+        seen.add(
+            key
+        )
+
+        pieces.append(
+            candidate
+        )
+
+    if not pieces:
+
+        # At minimum clean comma spacing.
+        if current != str(
+            _v85_field_value(
+                production_result,
+                "ADDRESS",
+            )
+        ):
+
+            _v7_set_field(
+                production_result,
+                "ADDRESS",
+                current,
+                source=
+                    "V8_5_ADDRESS_NORMALIZED",
+                status=
+                    "RULE_RECOVERED",
+            )
+
+        return
+
+    reconstructed = ", ".join(
+        pieces
+    )
+
+    reconstructed = re.sub(
+        r"\s+",
+        " ",
+        reconstructed,
+    ).strip(
+        " ,"
+    )
+
+    recovered_compact = (
+        _v85_address_compact(
+            reconstructed
+        )
+    )
+
+    # The reconstruction must cover most of the original address
+    # so that we cannot accidentally replace it with one short
+    # matching fragment.
+    coverage = (
+        len(
+            recovered_compact
+        )
+        /
+        max(
+            len(
+                current_compact
+            ),
+            1,
+        )
+    )
+
+    if (
+        coverage
+        >=
+        0.72
+        and
+        len(reconstructed)
+        >=
+        8
+    ):
+
+        _v7_set_field(
+            production_result,
+            "ADDRESS",
+            reconstructed,
+            source=
+                "V8_5_NATIVE_ADDRESS_RECONSTRUCTION",
+            status=
+                "RULE_RECOVERED",
+        )
+
+    elif current != str(
+        _v85_field_value(
+            production_result,
+            "ADDRESS",
+        )
+    ):
+
+        _v7_set_field(
+            production_result,
+            "ADDRESS",
+            current,
+            source=
+                "V8_5_ADDRESS_NORMALIZED",
+            status=
+                "RULE_RECOVERED",
+        )
+
+
+# ============================================================
+# V8.5 PRIORITY 6
+# CONSERVATIVE UOM ENRICHMENT
+# ============================================================
+
+_V85_UOM_ALIASES = {
+    "KG": "KG",
+    "KGS": "KG",
+    "KGM": "KG",
+    "PCS": "PCS",
+    "PC": "PCS",
+    "NOS": "NOS",
+    "NO": "NOS",
+    "EA": "EA",
+    "EACH": "EA",
+    "MTR": "MTR",
+    "MTRS": "MTR",
+    "MTS": "MTR",
+    "METER": "MTR",
+    "METERS": "MTR",
+    "LTR": "LTR",
+    "LTRS": "LTR",
+    "LITRE": "LTR",
+    "LITRES": "LTR",
+    "BOX": "BOX",
+    "BOXES": "BOX",
+    "BAG": "BAG",
+    "BAGS": "BAG",
+    "SET": "SET",
+    "SETS": "SET",
+    "ROLL": "ROLL",
+    "ROLLS": "ROLL",
+    "MT": "MT",
+    "TON": "TON",
+    "TONNE": "TON",
+}
+
+
+def _v85_quantity_text_variants(
+    value,
+):
+
+    number = _v7_number(
+        value
+    )
+
+    variants = set()
+
+    raw = str(
+        value
+        if value is not None
+        else ""
+    ).strip()
+
+    if raw:
+        variants.add(
+            raw.replace(
+                ",",
+                "",
+            )
+        )
+
+    if number is not None:
+
+        variants.add(
+            str(number)
+        )
+
+        variants.add(
+            f"{number:.2f}"
+        )
+
+        variants.add(
+            f"{number:.3f}"
+        )
+
+    return {
+        item.rstrip(
+            "0"
+        ).rstrip(
+            "."
+        )
+        if
+        "."
+        in item
+        else
+        item
+        for item in variants
+        if item
+    }
+
+
+def _v85_extract_uom_near_quantity(
+    text,
+    quantity,
+):
+
+    """
+    Accept a UOM only when it is adjacent to the row quantity.
+    This avoids treating random description words as units.
+    """
+
+    normalized = re.sub(
+        r"\s+",
+        " ",
+        str(text),
+    ).strip()
+
+    upper = normalized.upper()
+
+    aliases = "|".join(
+        sorted(
+            (
+                re.escape(key)
+                for key
+                in _V85_UOM_ALIASES
+            ),
+            key=len,
+            reverse=True,
+        )
+    )
+
+    for quantity_variant in (
+        _v85_quantity_text_variants(
+            quantity
+        )
+    ):
+
+        escaped_qty = re.escape(
+            quantity_variant
+        )
+
+        patterns = (
+            rf"\b({aliases})\b\s*{escaped_qty}\b",
+            rf"\b{escaped_qty}\b\s*\b({aliases})\b",
+        )
+
+        for pattern in patterns:
+
+            match = re.search(
+                pattern,
+                upper,
+            )
+
+            if match:
+
+                raw_uom = (
+                    match.group(1)
+                    .upper()
+                )
+
+                return (
+                    _V85_UOM_ALIASES.get(
+                        raw_uom
+                    )
+                )
+
+    return None
+
+
+def _v85_enrich_line_item_uom(
+    input_path,
+    production_result,
+):
+
+    if not isinstance(
+        production_result,
+        dict,
+    ):
+        return
+
+    line_items = production_result.get(
+        "line_items"
     )
 
     if not isinstance(
         line_items,
         list,
     ):
+        return
+
+    lines = _v81_document_lines(
+        input_path
+    )
+
+    if not lines:
         return
 
     changed = False
@@ -11017,32 +12840,143 @@ def _v83_propagate_single_hsn(
 
         current = str(
             item.get(
-                "hsn_code",
+                "uom",
+                "",
+            )
+            or
+            ""
+        ).strip().casefold()
+
+        if current not in {
+            "",
+            "not_detected",
+            "not detected",
+            "none",
+            "null",
+        }:
+            continue
+
+        description = re.sub(
+            r"\s+",
+            " ",
+            str(
+                item.get(
+                    "description",
+                    "",
+                )
+            ),
+        ).strip()
+
+        material = str(
+            item.get(
+                "material_code",
                 "",
             )
             or
             ""
         ).strip()
 
-        if current not in {
-            "",
-            "NOT_DETECTED",
-            "None",
-            "null",
-        }:
-            continue
-
-        item[
-            "hsn_code"
-        ] = normalized_hsn
-
-        item[
-            "hsn_source"
-        ] = (
-            "V8_3_SINGLE_DYNAMIC_HSN"
+        quantity = item.get(
+            "quantity",
+            item.get(
+                "quantity_numeric"
+            ),
         )
 
-        changed = True
+        description_key = (
+            _v85_name_key(
+                description
+            )
+        )
+
+        candidates = []
+
+        for line in lines:
+
+            line_text = re.sub(
+                r"\s+",
+                " ",
+                str(
+                    line.get(
+                        "text",
+                        "",
+                    )
+                ),
+            ).strip()
+
+            line_key = _v85_name_key(
+                line_text
+            )
+
+            relevant = False
+
+            if (
+                material
+                and
+                material
+                not in {
+                    "NOT_DETECTED",
+                    "None",
+                    "null",
+                }
+                and
+                material
+                in line_text
+            ):
+                relevant = True
+
+            if (
+                not relevant
+                and
+                description_key
+                and
+                len(
+                    description_key
+                )
+                >=
+                5
+                and
+                description_key
+                in
+                line_key
+            ):
+                relevant = True
+
+            if relevant:
+
+                uom = (
+                    _v85_extract_uom_near_quantity(
+                        line_text,
+                        quantity,
+                    )
+                )
+
+                if uom:
+                    candidates.append(
+                        uom
+                    )
+
+        unique = set(
+            candidates
+        )
+
+        # Only assign if document evidence points to one
+        # unambiguous UOM for that row.
+        if len(unique) == 1:
+
+            item[
+                "uom"
+            ] = next(
+                iter(unique)
+            )
+
+            item[
+                "uom_source"
+            ] = (
+                "V8_5_NATIVE_ROW_UOM"
+            )
+
+            changed = True
 
     if changed:
 
@@ -11058,7 +12992,7 @@ def _v83_propagate_single_hsn(
         ):
 
             extraction[
-                "hsn_line_item_propagation"
+                "uom_line_item_enrichment"
             ] = True
 
 
@@ -11135,6 +13069,17 @@ def _v7_harden_result(
     )
 
     # ========================================================
+    # V8.4 PRIORITY 2
+    # Dynamic false-positive filtering.
+    # ========================================================
+
+    dynamic_fields = (
+        _v84_filter_dynamic_false_positives(
+            dynamic_fields
+        )
+    )
+
+    # ========================================================
     # V8.3 FINAL OUTPUT POLISH
     # ========================================================
 
@@ -11182,13 +13127,39 @@ def _v7_harden_result(
         production_result
     )
 
+    # ========================================================
+    # V8.5 PRIORITIES 4 + 5
+    # Counterparty + address quality.
+    # ========================================================
+
+    _v85_recover_customer_name(
+        input_path,
+        production_result,
+    )
+
+    _v85_normalize_address(
+        input_path,
+        production_result,
+    )
+
+    # ========================================================
+    # V8.5 PRIORITIES 3 + 6
+    # Safe HSN + native row UOM enrichment.
+    # ========================================================
+
     _v83_propagate_single_hsn(
         production_result,
         dynamic_fields,
     )
 
+    _v85_enrich_line_item_uom(
+        input_path,
+        production_result,
+    )
+
     _v81_safe_adjustments(
-        production_result
+        production_result,
+        dynamic_fields,
     )
 
     _v7_reconcile_total(
