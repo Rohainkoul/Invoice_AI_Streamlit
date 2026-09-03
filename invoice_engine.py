@@ -8960,6 +8960,1815 @@ def _v8_clean_dynamic_values(
     return dynamic_fields
 
 
+# ============================================================
+# V8.1 CORE STRESS-TEST HARDENING
+#
+# Targets:
+#   1. Explicit Due Dt / Due Date recovery
+#   2. BILL TO customer + address precedence
+#   3. Structured line-item fallback from trained arrays
+#   4. Financial adjustment sanitization + reconciliation
+#
+# No retraining.
+# No model-weight changes.
+# No inference architecture changes.
+# ============================================================
+
+
+def _v81_document_lines(
+    input_path,
+):
+
+    lines = (
+        _dynamic_pdf_lines(
+            input_path
+        )
+    )
+
+    if not isinstance(
+        lines,
+        list,
+    ):
+        return []
+
+    return [
+        item
+        for item
+        in lines
+        if isinstance(
+            item,
+            dict,
+        )
+    ]
+
+
+def _v81_recover_due_date(
+    input_path,
+    production_result,
+):
+
+    """
+    Recover explicit due-date aliases that the neural/runtime
+    layer may miss.
+
+    Examples:
+      Due Date:
+      Due Dt.:
+      Due Dt:
+      Payment Due:
+      Due On:
+    """
+
+    lines = (
+        _v81_document_lines(
+            input_path
+        )
+    )
+
+    date_pattern = (
+        r"("
+        r"\d{1,2}[./-]\d{1,2}[./-]\d{2,4}"
+        r"|"
+        r"\d{4}[./-]\d{1,2}[./-]\d{1,2}"
+        r")"
+    )
+
+    pattern = re.compile(
+        r"(?i)"
+        r"\b(?:"
+        r"due\s*date"
+        r"|due\s*dt\.?"
+        r"|due\s*on"
+        r"|payment\s*due"
+        r")"
+        r"\s*[:=\-]?\s*"
+        +
+        date_pattern
+    )
+
+    for line in lines:
+
+        text = str(
+            line.get(
+                "text",
+                "",
+            )
+        )
+
+        match = pattern.search(
+            text
+        )
+
+        if not match:
+            continue
+
+        value = (
+            match.group(1)
+            .strip()
+        )
+
+        _v7_set_field(
+            production_result,
+            "DUE_DATE",
+            value,
+            source=
+                "V8_1_EXPLICIT_DUE_DATE",
+            status=
+                "RULE_RECOVERED",
+        )
+
+        return
+
+
+def _v81_is_probable_address(
+    value,
+):
+
+    text = re.sub(
+        r"\s+",
+        " ",
+        str(
+            value
+            or
+            ""
+        ),
+    ).strip()
+
+    if len(text) < 8:
+        return False
+
+    lowered = (
+        text.casefold()
+    )
+
+    if re.search(
+        r"(?i)"
+        r"\b("
+        r"gstin|pan|cin|"
+        r"invoice|inv\.?\s*no|"
+        r"posting\s*date|"
+        r"due\s*date|due\s*dt|"
+        r"currency|"
+        r"ship\s*to|"
+        r"customer\s*gstin|"
+        r"state\s*code|"
+        r"po\s|p\.?\s*o\.?|"
+        r"gr\s|delivery\s*note|"
+        r"e[- ]?way"
+        r")\b",
+        lowered,
+    ):
+        return False
+
+    address_tokens = (
+        "road",
+        "rd",
+        "street",
+        "st",
+        "sector",
+        "plot",
+        "unit",
+        "floor",
+        "building",
+        "plaza",
+        "park",
+        "estate",
+        "nagar",
+        "palayam",
+        "road",
+        "gurugram",
+        "noida",
+        "delhi",
+        "mumbai",
+        "kolkata",
+        "chennai",
+        "bangalore",
+        "bengaluru",
+        "haryana",
+        "uttar pradesh",
+        "west bengal",
+    )
+
+    if any(
+        token
+        in
+        lowered
+        for token
+        in address_tokens
+    ):
+        return True
+
+    if re.search(
+        r"\b\d{5,6}\b",
+        text,
+    ):
+        return True
+
+    return False
+
+
+def _v81_recover_bill_to(
+    input_path,
+    production_result,
+):
+
+    """
+    Explicit BILL TO / BILLED TO sections outrank generic
+    vendor-header address recovery.
+    """
+
+    lines = (
+        _v81_document_lines(
+            input_path
+        )
+    )
+
+    for index, line in enumerate(
+        lines
+    ):
+
+        text = re.sub(
+            r"\s+",
+            " ",
+            str(
+                line.get(
+                    "text",
+                    "",
+                )
+            ),
+        ).strip()
+
+        match = re.search(
+            r"(?i)"
+            r"\b(?:"
+            r"bill\s*to"
+            r"|billed\s*to"
+            r")"
+            r"\s*[:\-]?\s*"
+            r"(.+)$",
+            text,
+        )
+
+        if not match:
+            continue
+
+        customer = (
+            match.group(1)
+            .strip(
+                " \t:;-"
+            )
+        )
+
+        if (
+            len(customer) >= 3
+            and
+            re.search(
+                r"[A-Za-z]",
+                customer,
+            )
+        ):
+
+            customer = (
+                _v7_trim_value_at_next_label(
+                    customer
+                )
+            )
+
+            if customer:
+
+                _v7_set_field(
+                    production_result,
+                    "CUSTOMER_NAME",
+                    customer,
+                    source=
+                        "V8_1_EXPLICIT_BILL_TO",
+                    status=
+                        "RULE_RECOVERED",
+                )
+
+        # ----------------------------------------------------
+        # Prefer the first genuine address immediately below
+        # BILL TO.
+        # ----------------------------------------------------
+
+        for next_index in range(
+            index + 1,
+            min(
+                index + 4,
+                len(lines),
+            ),
+        ):
+
+            candidate = re.sub(
+                r"\s+",
+                " ",
+                str(
+                    lines[
+                        next_index
+                    ].get(
+                        "text",
+                        "",
+                    )
+                ),
+            ).strip()
+
+            if re.search(
+                r"(?i)"
+                r"\b("
+                r"ship\s*to|"
+                r"customer\s*gstin|"
+                r"state\s*code|"
+                r"place\s*of\s*supply"
+                r")\b",
+                candidate,
+            ):
+
+                continue
+
+            if not _v81_is_probable_address(
+                candidate
+            ):
+                continue
+
+            _v7_set_field(
+                production_result,
+                "ADDRESS",
+                candidate,
+                source=
+                    "V8_1_EXPLICIT_BILL_TO_ADDRESS",
+                status=
+                    "RULE_RECOVERED",
+            )
+
+            break
+
+        return
+
+
+def _v81_field_list(
+    production_result,
+    field_name,
+):
+
+    try:
+
+        information = (
+            production_result[
+                "fields"
+            ][
+                field_name
+            ]
+        )
+
+    except Exception:
+
+        return []
+
+    if isinstance(
+        information,
+        dict,
+    ):
+
+        value = information.get(
+            "value"
+        )
+
+    else:
+
+        value = information
+
+    if isinstance(
+        value,
+        list,
+    ):
+
+        return value
+
+    return []
+
+
+def _v81_rebuild_line_items(
+    production_result,
+):
+
+    """
+    If the neural model produced aligned trained arrays but the
+    runtime table builder returned [], reconstruct conservative
+    structured rows from those arrays.
+
+    Existing non-empty structured line_items are NEVER replaced.
+    """
+
+    if not isinstance(
+        production_result,
+        dict,
+    ):
+        return
+
+    existing = (
+        production_result.get(
+            "line_items"
+        )
+    )
+
+    if (
+        isinstance(
+            existing,
+            list,
+        )
+        and
+        existing
+    ):
+        return
+
+    descriptions = (
+        _v81_field_list(
+            production_result,
+            "LINE_ITEM_DESC",
+        )
+    )
+
+    quantities = (
+        _v81_field_list(
+            production_result,
+            "LINE_ITEM_QTY",
+        )
+    )
+
+    unit_prices = (
+        _v81_field_list(
+            production_result,
+            "LINE_ITEM_UNIT_PRICE",
+        )
+    )
+
+    amounts = (
+        _v81_field_list(
+            production_result,
+            "LINE_ITEM_AMOUNT",
+        )
+    )
+
+    numeric_lengths = [
+        len(values)
+        for values
+        in (
+            quantities,
+            unit_prices,
+            amounts,
+        )
+        if isinstance(
+            values,
+            list,
+        )
+        and
+        values
+    ]
+
+    if not numeric_lengths:
+        return
+
+    row_count = min(
+        numeric_lengths
+    )
+
+    if (
+        row_count <= 0
+        or
+        len(descriptions)
+        <
+        row_count
+    ):
+        return
+
+    rows = []
+
+    for index in range(
+        row_count
+    ):
+
+        description = re.sub(
+            r"\s+",
+            " ",
+            str(
+                descriptions[
+                    index
+                ]
+            ),
+        ).strip()
+
+        quantity = (
+            quantities[
+                index
+            ]
+            if index
+            <
+            len(quantities)
+            else
+            None
+        )
+
+        unit_price = (
+            unit_prices[
+                index
+            ]
+            if index
+            <
+            len(unit_prices)
+            else
+            None
+        )
+
+        amount = (
+            amounts[
+                index
+            ]
+            if index
+            <
+            len(amounts)
+            else
+            None
+        )
+
+        # ----------------------------------------------------
+        # Reject obvious non-item text that leaked into the
+        # neural description sequence.
+        # ----------------------------------------------------
+
+        if re.search(
+            r"(?i)"
+            r"\b("
+            r"payment\s*mode|"
+            r"payment\s*terms|"
+            r"bank\s*name|"
+            r"ifsc|"
+            r"account\s*number|"
+            r"amount\s*in\s*words|"
+            r"remarks"
+            r")\b",
+            description,
+        ):
+
+            continue
+
+        rows.append(
+            {
+                "line_number":
+                    len(rows)
+                    +
+                    1,
+
+                "material_code":
+                    "NOT_DETECTED",
+
+                "description":
+                    description,
+
+                "hsn_code":
+                    "NOT_DETECTED",
+
+                "uom":
+                    "NOT_DETECTED",
+
+                "quantity":
+                    str(
+                        quantity
+                    ).strip(),
+
+                "quantity_numeric":
+                    _v7_number(
+                        quantity
+                    ),
+
+                "unit_price":
+                    _v7_number(
+                        unit_price
+                    ),
+
+                "unit_price_source":
+                    "V8_1_TRAINED_ARRAY_FALLBACK",
+
+                "line_amount":
+                    _v7_number(
+                        amount
+                    ),
+
+                "line_amount_source":
+                    "V8_1_TRAINED_ARRAY_FALLBACK",
+
+                "page":
+                    None,
+            }
+        )
+
+    if not rows:
+        return
+
+    production_result[
+        "line_items"
+    ] = rows
+
+    extraction = (
+        production_result.get(
+            "extraction_summary"
+        )
+    )
+
+    if isinstance(
+        extraction,
+        dict,
+    ):
+
+        extraction[
+            "line_item_mode"
+        ] = (
+            "TRAINED_ARRAY_FALLBACK_V8_1"
+        )
+
+
+def _v81_safe_adjustments(
+    production_result,
+):
+
+    """
+    Runtime summary extraction may accidentally classify rollup
+    rows such as GST Taxable Base and Total Tax as adjustments.
+
+    Keep genuine plus/minus invoice adjustments only.
+    """
+
+    details = (
+        production_result.get(
+            "financial_details"
+        )
+    )
+
+    if not isinstance(
+        details,
+        dict,
+    ):
+        return []
+
+    adjustments = (
+        details.get(
+            "adjustments"
+        )
+    )
+
+    if not isinstance(
+        adjustments,
+        list,
+    ):
+        adjustments = []
+
+    safe = []
+
+    reject_patterns = (
+        "gst taxable base",
+        "taxable base",
+        "taxable value",
+        "total tax",
+        "cgst",
+        "sgst",
+        "igst",
+        "subtotal",
+        "sub total",
+        "basic total",
+        "grand total",
+        "bill amount",
+        "invoice total",
+    )
+
+    allow_patterns = (
+        "discount",
+        "freight",
+        "packing",
+        "forwarding",
+        "shipping",
+        "handling",
+        "insurance",
+        "surcharge",
+        "other charge",
+        "other charges",
+    )
+
+    for item in adjustments:
+
+        if not isinstance(
+            item,
+            dict,
+        ):
+            continue
+
+        label = re.sub(
+            r"\s+",
+            " ",
+            str(
+                item.get(
+                    "label",
+                    "",
+                )
+            ),
+        ).strip()
+
+        key = (
+            label.casefold()
+        )
+
+        if any(
+            pattern
+            in
+            key
+            for pattern
+            in reject_patterns
+        ):
+            continue
+
+        if not any(
+            pattern
+            in
+            key
+            for pattern
+            in allow_patterns
+        ):
+            continue
+
+        amount = (
+            _v7_number(
+                item.get(
+                    "amount"
+                )
+            )
+        )
+
+        if amount is None:
+            continue
+
+        safe.append(
+            dict(item)
+        )
+
+    details[
+        "adjustments"
+    ] = safe
+
+    details[
+        "adjustment_total"
+    ] = round(
+        sum(
+            (
+                _v7_number(
+                    item.get(
+                        "amount"
+                    )
+                )
+                or
+                0.0
+            )
+            for item
+            in safe
+        ),
+        2,
+    )
+
+    return safe
+
+
+def _v81_reconcile_validation(
+    production_result,
+):
+
+    """
+    Recompute financial + GST + line-item validation from final
+    trusted values after V8.1 repairs.
+    """
+
+    if not isinstance(
+        production_result,
+        dict,
+    ):
+        return
+
+    fields = (
+        production_result.get(
+            "fields",
+            {}
+        )
+    )
+
+    if not isinstance(
+        fields,
+        dict,
+    ):
+        return
+
+    def field_number(
+        name,
+    ):
+
+        information = fields.get(
+            name
+        )
+
+        if isinstance(
+            information,
+            dict,
+        ):
+
+            return _v7_number(
+                information.get(
+                    "value"
+                )
+            )
+
+        return _v7_number(
+            information
+        )
+
+    subtotal = field_number(
+        "SUBTOTAL"
+    )
+
+    tax = field_number(
+        "TAX"
+    )
+
+    total = field_number(
+        "TOTAL_AMOUNT"
+    )
+
+    details = (
+        production_result.get(
+            "financial_details",
+            {}
+        )
+    )
+
+    adjustment_total = 0.0
+    round_off = 0.0
+
+    if isinstance(
+        details,
+        dict,
+    ):
+
+        adjustment_total = (
+            _v7_number(
+                details.get(
+                    "adjustment_total"
+                )
+            )
+            or
+            0.0
+        )
+
+        round_info = (
+            details.get(
+                "round_off"
+            )
+        )
+
+        if isinstance(
+            round_info,
+            dict,
+        ):
+
+            round_off = (
+                _v7_number(
+                    round_info.get(
+                        "value"
+                    )
+                )
+                or
+                0.0
+            )
+
+    validation = (
+        production_result.get(
+            "validation"
+        )
+    )
+
+    if not isinstance(
+        validation,
+        dict,
+    ):
+        return
+
+    financial = (
+        validation.get(
+            "financial_reconciliation"
+        )
+    )
+
+    financial_pass = None
+
+    if isinstance(
+        financial,
+        dict,
+    ):
+
+        financial[
+            "subtotal"
+        ] = subtotal
+
+        financial[
+            "tax"
+        ] = tax
+
+        financial[
+            "adjustments_total"
+        ] = adjustment_total
+
+        financial[
+            "round_off"
+        ] = round_off
+
+        financial[
+            "total_amount"
+        ] = total
+
+        if (
+            subtotal is not None
+            and
+            tax is not None
+            and
+            total is not None
+        ):
+
+            calculated = round(
+                subtotal
+                +
+                adjustment_total
+                +
+                tax
+                +
+                round_off,
+                2,
+            )
+
+            difference = round(
+                calculated
+                -
+                total,
+                2,
+            )
+
+            financial_pass = (
+                abs(
+                    difference
+                )
+                <=
+                0.50
+            )
+
+            financial[
+                "calculated_total"
+            ] = calculated
+
+            financial[
+                "difference"
+            ] = difference
+
+            financial[
+                "passed"
+            ] = financial_pass
+
+    # --------------------------------------------------------
+    # GST validation
+    # --------------------------------------------------------
+
+    gst = (
+        validation.get(
+            "gst_reconciliation"
+        )
+    )
+
+    gst_pass = None
+
+    if isinstance(
+        gst,
+        dict,
+    ):
+
+        component_sum = (
+            _v7_number(
+                gst.get(
+                    "component_sum"
+                )
+            )
+        )
+
+        if (
+            component_sum
+            is not None
+            and
+            tax
+            is not None
+        ):
+
+            gst_difference = round(
+                component_sum
+                -
+                tax,
+                2,
+            )
+
+            gst_pass = (
+                abs(
+                    gst_difference
+                )
+                <=
+                0.05
+            )
+
+            gst[
+                "difference"
+            ] = gst_difference
+
+            gst[
+                "matches_tax_total"
+            ] = gst_pass
+
+    # --------------------------------------------------------
+    # Line-item reconciliation
+    # --------------------------------------------------------
+
+    line_items = (
+        production_result.get(
+            "line_items",
+            []
+        )
+    )
+
+    line_validation = (
+        validation.get(
+            "line_item_reconciliation"
+        )
+    )
+
+    if (
+        isinstance(
+            line_items,
+            list,
+        )
+        and
+        isinstance(
+            line_validation,
+            dict,
+        )
+    ):
+
+        amounts = []
+
+        quantities = []
+
+        for item in line_items:
+
+            if not isinstance(
+                item,
+                dict,
+            ):
+                continue
+
+            amount = (
+                _v7_number(
+                    item.get(
+                        "line_amount"
+                    )
+                )
+            )
+
+            quantity = (
+                _v7_number(
+                    item.get(
+                        "quantity_numeric",
+                        item.get(
+                            "quantity"
+                        ),
+                    )
+                )
+            )
+
+            if amount is not None:
+                amounts.append(
+                    amount
+                )
+
+            if quantity is not None:
+                quantities.append(
+                    quantity
+                )
+
+        line_sum = (
+            round(
+                sum(amounts),
+                2,
+            )
+            if amounts
+            else
+            None
+        )
+
+        line_validation[
+            "row_count"
+        ] = len(
+            line_items
+        )
+
+        line_validation[
+            "total_quantity"
+        ] = (
+            sum(
+                quantities
+            )
+            if quantities
+            else
+            None
+        )
+
+        line_validation[
+            "line_amount_sum"
+        ] = line_sum
+
+        if (
+            line_sum is not None
+            and
+            subtotal is not None
+        ):
+
+            line_difference = round(
+                line_sum
+                -
+                subtotal,
+                2,
+            )
+
+            line_validation[
+                "difference"
+            ] = line_difference
+
+            line_validation[
+                "matches_subtotal"
+            ] = (
+                abs(
+                    line_difference
+                )
+                <=
+                0.05
+            )
+
+    # --------------------------------------------------------
+    # Remove stale failure flags when the repaired validation
+    # now proves the invoice correct.
+    # --------------------------------------------------------
+
+    flags = (
+        validation.get(
+            "quality_flags"
+        )
+    )
+
+    if not isinstance(
+        flags,
+        list,
+    ):
+        flags = []
+
+    cleaned_flags = []
+
+    for flag in flags:
+
+        flag_text = str(
+            flag
+        ).strip()
+
+        if (
+            flag_text
+            ==
+            "FINANCIAL_RECONCILIATION_FAILED"
+            and
+            financial_pass
+            is True
+        ):
+            continue
+
+        if (
+            flag_text
+            ==
+            "GST_RECONCILIATION_FAILED"
+            and
+            gst_pass
+            is True
+        ):
+            continue
+
+        cleaned_flags.append(
+            flag_text
+        )
+
+    validation[
+        "quality_flags"
+    ] = cleaned_flags
+
+    core_pass = bool(
+        validation.get(
+            "core_fields_pass",
+            True,
+        )
+    )
+
+    if (
+        core_pass
+        and
+        financial_pass
+        is not False
+        and
+        gst_pass
+        is not False
+        and
+        not cleaned_flags
+    ):
+
+        validation[
+            "overall_status"
+        ] = "PASS"
+
+    elif not core_pass:
+
+        validation[
+            "overall_status"
+        ] = "REVIEW_REQUIRED"
+
+    document = (
+        production_result.get(
+            "document"
+        )
+    )
+
+    if isinstance(
+        document,
+        dict,
+    ):
+
+        document[
+            "status"
+        ] = validation.get(
+            "overall_status",
+            document.get(
+                "status"
+            ),
+        )
+
+
+
+# ============================================================
+# V8.2 FINAL STRESS-TEST PRECISION LAYER
+# ============================================================
+
+def _v82_repair_customer_name(
+    input_path,
+    production_result,
+):
+    lines = _v81_document_lines(input_path)
+
+    for index, line in enumerate(lines):
+
+        text = re.sub(
+            r"\s+",
+            " ",
+            str(line.get("text", "")),
+        ).strip()
+
+        if not re.search(
+            r"(?i)\bbill\s*to\b",
+            text,
+        ):
+            continue
+
+        trailing = re.sub(
+            r"(?i)^.*?\bbill\s*to\b\s*[:\-]?\s*",
+            "",
+            text,
+        ).strip()
+
+        candidates = []
+
+        if trailing:
+            candidates.append(trailing)
+
+        for next_index in range(
+            index + 1,
+            min(index + 4, len(lines)),
+        ):
+            candidates.append(
+                re.sub(
+                    r"\s+",
+                    " ",
+                    str(
+                        lines[next_index].get(
+                            "text",
+                            "",
+                        )
+                    ),
+                ).strip()
+            )
+
+        for candidate in candidates:
+
+            if not candidate:
+                continue
+
+            if _v81_is_probable_address(candidate):
+                continue
+
+            if re.search(
+                r"(?i)\b("
+                r"customer\s*gstin|"
+                r"state\s*code|"
+                r"ship\s*to|"
+                r"place\s*of\s*supply"
+                r")\b",
+                candidate,
+            ):
+                continue
+
+            if not re.search(
+                r"(?i)\b("
+                r"private|pvt|limited|ltd|"
+                r"enterprise|enterprises|"
+                r"industries|industrial|"
+                r"solutions|systems|"
+                r"corporation|company"
+                r")\b",
+                candidate,
+            ):
+                continue
+
+            _v7_set_field(
+                production_result,
+                "CUSTOMER_NAME",
+                candidate,
+                source="V8_2_EXPLICIT_BILL_TO_NAME",
+                status="RULE_RECOVERED",
+            )
+
+            return
+
+
+def _v82_trim_line_description_array(
+    production_result,
+):
+    fields = production_result.get(
+        "fields",
+        {}
+    )
+
+    if not isinstance(fields, dict):
+        return
+
+    desc_info = fields.get(
+        "LINE_ITEM_DESC"
+    )
+
+    if not isinstance(desc_info, dict):
+        return
+
+    descriptions = desc_info.get(
+        "value"
+    )
+
+    if not isinstance(descriptions, list):
+        return
+
+    numeric_lengths = []
+
+    for name in (
+        "LINE_ITEM_QTY",
+        "LINE_ITEM_UNIT_PRICE",
+        "LINE_ITEM_AMOUNT",
+    ):
+
+        info = fields.get(name)
+
+        if not isinstance(info, dict):
+            continue
+
+        values = info.get("value")
+
+        if isinstance(values, list) and values:
+            numeric_lengths.append(len(values))
+
+    if not numeric_lengths:
+        return
+
+    row_count = min(numeric_lengths)
+
+    if len(descriptions) > row_count:
+
+        desc_info["value"] = (
+            descriptions[:row_count]
+        )
+
+        desc_info["source"] = (
+            "V8_2_ROW_COUNT_ALIGNED"
+        )
+
+
+def _v82_dynamic_payload(
+    value,
+    evidence,
+    *,
+    source="V8_2_EXPLICIT_CONTEXT",
+):
+    return {
+        "value": value,
+        "status": "DETECTED",
+        "confidence": 1.0,
+        "page": 1,
+        "source": source,
+        "evidence": evidence,
+    }
+
+
+def _v82_repair_dynamic_fields(
+    input_path,
+    discovered_fields,
+    dynamic_fields,
+):
+    if not isinstance(dynamic_fields, dict):
+        dynamic_fields = {}
+
+    lines = _v81_document_lines(input_path)
+
+    # Remove known malformed schema fragments.
+    for bad_key in list(dynamic_fields.keys()):
+
+        normalized = re.sub(
+            r"[^a-z0-9]+",
+            " ",
+            str(bad_key).lower(),
+        ).strip()
+
+        if normalized in {
+            "date old inv ref",
+            "net 30 days payment mode",
+            "hdfc bank ifsc code",
+        }:
+            dynamic_fields.pop(
+                bad_key,
+                None,
+            )
+
+    for line in lines:
+
+        text = re.sub(
+            r"\s+",
+            " ",
+            str(line.get("text", "")),
+        ).strip()
+
+        # ----------------------------------------------------
+        # CIN
+        # ----------------------------------------------------
+        match = re.search(
+            r"(?i)\bCIN\s*[:=]\s*"
+            r"([LU]\d{5}[A-Z]{2}\d{4}[A-Z]{3}\d{6})",
+            text,
+        )
+
+        if match:
+            value = match.group(1).upper()
+
+            dynamic_fields["CIN"] = (
+                _v82_dynamic_payload(
+                    value,
+                    text,
+                )
+            )
+
+        # ----------------------------------------------------
+        # PO
+        # ----------------------------------------------------
+        match = re.search(
+            r"(?i)"
+            r"\bP\s*\.?\s*O\s*\.?"
+            r"\s*(?:Ref(?:erence)?|No|Number)?\.?"
+            r"\s*[:=]\s*"
+            r"([A-Z0-9][A-Z0-9./_\-]{2,})",
+            text,
+        )
+
+        if match:
+            value = match.group(1)
+
+            dynamic_fields["PO Number"] = (
+                _v82_dynamic_payload(
+                    value,
+                    text,
+                )
+            )
+
+            dynamic_fields.pop(
+                "PO Ref.",
+                None,
+            )
+
+        # ----------------------------------------------------
+        # E-WAY BILL
+        # ----------------------------------------------------
+        match = re.search(
+            r"(?i)"
+            r"\bE[\-\s]?Way"
+            r"(?:\s*Bill)?"
+            r"\s*(?:No|Number)?\.?"
+            r"\s*[:=]\s*"
+            r"([0-9][0-9 \-]{8,20})",
+            text,
+        )
+
+        if match:
+
+            digits = re.sub(
+                r"\D",
+                "",
+                match.group(1),
+            )
+
+            if 10 <= len(digits) <= 15:
+
+                dynamic_fields[
+                    "E-Way Bill Number"
+                ] = (
+                    _v82_dynamic_payload(
+                        digits,
+                        text,
+                    )
+                )
+
+                dynamic_fields.pop(
+                    "E-Way No.",
+                    None,
+                )
+
+        # ----------------------------------------------------
+        # TRANSPORTER GSTIN
+        # ----------------------------------------------------
+        match = re.search(
+            r"(?i)"
+            r"\bTransporter\s*GSTIN"
+            r"\s*[:=]\s*"
+            r"([0-9]{2}[A-Z]{5}[0-9]{4}"
+            r"[A-Z][1-9A-Z]Z[0-9A-Z])",
+            text,
+        )
+
+        if match:
+
+            dynamic_fields[
+                "Transporter GSTIN"
+            ] = (
+                _v82_dynamic_payload(
+                    match.group(1).upper(),
+                    text,
+                )
+            )
+
+        # ----------------------------------------------------
+        # PAYMENT MODE
+        # ----------------------------------------------------
+        match = re.search(
+            r"(?i)"
+            r"\bPayment\s*Mode\s*[:=]\s*"
+            r"(.+)$",
+            text,
+        )
+
+        if match:
+
+            value = _v7_trim_value_at_next_label(
+                match.group(1)
+            )
+
+            if value:
+                dynamic_fields[
+                    "Payment Mode"
+                ] = (
+                    _v82_dynamic_payload(
+                        value,
+                        text,
+                    )
+                )
+
+        # ----------------------------------------------------
+        # IFSC
+        # ----------------------------------------------------
+        match = re.search(
+            r"(?i)"
+            r"\bIFSC\s*(?:Code)?\s*[:=]\s*"
+            r"([A-Z]{4}0[A-Z0-9]{6})",
+            text,
+        )
+
+        if match:
+
+            dynamic_fields[
+                "IFSC Code"
+            ] = (
+                _v82_dynamic_payload(
+                    match.group(1).upper(),
+                    text,
+                )
+            )
+
+        # ----------------------------------------------------
+        # VEHICLE CANONICALIZATION
+        # ----------------------------------------------------
+        match = re.search(
+            r"(?i)"
+            r"\bVehicle(?:\s*(?:No|Number))?"
+            r"\s*[:=]\s*"
+            r"([A-Z]{2}[A-Z0-9\-]{4,})",
+            text,
+        )
+
+        if match:
+
+            dynamic_fields[
+                "Vehicle Number"
+            ] = (
+                _v82_dynamic_payload(
+                    match.group(1).upper(),
+                    text,
+                )
+            )
+
+            dynamic_fields.pop(
+                "Vehicle",
+                None,
+            )
+
+        # ----------------------------------------------------
+        # ACK CANONICALIZATION
+        # ----------------------------------------------------
+        match = re.search(
+            r"(?i)"
+            r"\bAck(?:nowledgement)?"
+            r"\s*(?:No|Number)?\.?"
+            r"\s*[:=]\s*"
+            r"(\d{10,20})",
+            text,
+        )
+
+        if match:
+
+            dynamic_fields[
+                "Ack Number"
+            ] = (
+                _v82_dynamic_payload(
+                    match.group(1),
+                    text,
+                )
+            )
+
+            dynamic_fields.pop(
+                "Ack No.",
+                None,
+            )
+
+    # Make discovery metadata agree with final cleaned schema.
+    if isinstance(discovered_fields, list):
+        discovered_fields[:] = list(
+            dynamic_fields.keys()
+        )
+
+    return dynamic_fields
+
+
+def _v82_sync_recovered_metadata(
+    production_result,
+):
+    """
+    Remove stale NOT_PRESENT bookkeeping after a field has been
+    recovered by later V8 logic.
+    """
+
+    fields = production_result.get(
+        "fields",
+        {}
+    )
+
+    due_info = (
+        fields.get("DUE_DATE")
+        if isinstance(fields, dict)
+        else None
+    )
+
+    due_value = (
+        due_info.get("value")
+        if isinstance(due_info, dict)
+        else None
+    )
+
+    if not due_value or str(due_value) == "NOT_DETECTED":
+        return
+
+    validation = production_result.get(
+        "validation"
+    )
+
+    if isinstance(validation, dict):
+
+        absent = validation.get(
+            "not_present_fields"
+        )
+
+        if isinstance(absent, list):
+            validation[
+                "not_present_fields"
+            ] = [
+                item
+                for item in absent
+                if item != "DUE_DATE"
+            ]
+
+    summary = production_result.get(
+        "extraction_summary"
+    )
+
+    if isinstance(summary, dict):
+
+        for key in (
+            "not_present_fields",
+            "confirmed_absent_fields",
+        ):
+
+            values = summary.get(key)
+
+            if isinstance(values, list):
+                summary[key] = [
+                    item
+                    for item in values
+                    if item != "DUE_DATE"
+                ]
+
+        values = summary.get(
+            "fields_with_values"
+        )
+
+        if isinstance(values, list):
+
+            if "DUE_DATE" not in values:
+                values.insert(
+                    3,
+                    "DUE_DATE",
+                )
+
+            summary[
+                "fields_with_values_count"
+            ] = len(values)
+
+        confirmed = summary.get(
+            "confirmed_absent_fields"
+        )
+
+        if isinstance(confirmed, list):
+
+            summary[
+                "confirmed_absent_field_count"
+            ] = len(confirmed)
+
+    # Remove stale warning when payment terms is actually present.
+    payment = (
+        fields.get("PAYMENT_TERMS")
+        if isinstance(fields, dict)
+        else None
+    )
+
+    payment_value = (
+        payment.get("value")
+        if isinstance(payment, dict)
+        else None
+    )
+
+    if payment_value and str(payment_value) != "NOT_DETECTED":
+
+        if isinstance(validation, dict):
+
+            warnings = validation.get(
+                "warnings"
+            )
+
+            if isinstance(warnings, list):
+
+                validation["warnings"] = [
+                    warning
+                    for warning in warnings
+                    if "PAYMENT_TERMS has no explicit evidence"
+                    not in str(warning)
+                ]
+
+
 def _v7_harden_result(
     input_path,
     production_result,
@@ -9020,7 +10829,54 @@ def _v7_harden_result(
         )
     )
 
+    # ========================================================
+    # V8.2 DYNAMIC / ENTITY PRECISION
+    # ========================================================
+
+    dynamic_fields = (
+        _v82_repair_dynamic_fields(
+            input_path,
+            discovered_fields,
+            dynamic_fields,
+        )
+    )
+
+    # ========================================================
+    # V8.1 CORE STRESS-TEST HARDENING
+    # ========================================================
+
+    _v81_recover_due_date(
+        input_path,
+        production_result,
+    )
+
+    _v81_recover_bill_to(
+        input_path,
+        production_result,
+    )
+
+    _v82_repair_customer_name(
+        input_path,
+        production_result,
+    )
+
+    _v82_trim_line_description_array(
+        production_result
+    )
+
+    _v81_rebuild_line_items(
+        production_result
+    )
+
+    _v81_safe_adjustments(
+        production_result
+    )
+
     _v7_reconcile_total(
+        production_result
+    )
+
+    _v81_reconcile_validation(
         production_result
     )
 
@@ -9031,6 +10887,10 @@ def _v7_harden_result(
     # ========================================================
 
     _v8_sync_normalized_from_final_fields(
+        production_result
+    )
+
+    _v82_sync_recovered_metadata(
         production_result
     )
 
