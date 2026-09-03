@@ -2709,6 +2709,53 @@ def _dynamic_pattern_score(
 # NATIVE PDF TEXT + GEOMETRY
 # ============================================================
 
+# ============================================================
+# V8 STEP 3
+# NATIVE PDF TEXT / GEOMETRY REQUEST CACHE
+#
+# Avoid reopening and reparsing the same PDF several times
+# during one inference flow.
+#
+# This caches document geometry only.
+# It does NOT cache neural predictions or final results.
+# ============================================================
+
+_DYNAMIC_PDF_LINES_CACHE = {}
+
+
+def _dynamic_pdf_cache_key(
+    input_path,
+):
+
+    path = Path(
+        input_path
+    )
+
+    try:
+
+        stat = path.stat()
+
+        return (
+            str(
+                path.resolve()
+            ),
+            int(
+                stat.st_size
+            ),
+            int(
+                stat.st_mtime_ns
+            ),
+        )
+
+    except Exception:
+
+        return (
+            str(path),
+            None,
+            None,
+        )
+
+
 def _dynamic_pdf_lines(
     input_path,
 ):
@@ -2729,6 +2776,28 @@ def _dynamic_pdf_lines(
     ):
 
         return []
+
+    cache_key = (
+        _dynamic_pdf_cache_key(
+            path
+        )
+    )
+
+    cached = (
+        _DYNAMIC_PDF_LINES_CACHE.get(
+            cache_key
+        )
+    )
+
+    if cached is not None:
+
+        # Return fresh dictionaries so callers cannot mutate
+        # the cached source data accidentally.
+        return [
+            dict(item)
+            for item
+            in cached
+        ]
 
     lines = []
 
@@ -2929,7 +2998,24 @@ def _dynamic_pdf_lines(
 
         document.close()
 
-    return lines
+    # Keep the cache intentionally tiny. Streamlit uploads use
+    # temporary paths, so old entries provide no long-term
+    # benefit.
+    _DYNAMIC_PDF_LINES_CACHE.clear()
+
+    _DYNAMIC_PDF_LINES_CACHE[
+        cache_key
+    ] = tuple(
+        dict(item)
+        for item
+        in lines
+    )
+
+    return [
+        dict(item)
+        for item
+        in lines
+    ]
 
 
 # ============================================================
@@ -5246,6 +5332,234 @@ def _auto_label_key(value):
     )
 
 
+# ============================================================
+# V8 DYNAMIC LABEL QUALITY FILTER
+#
+# Purpose:
+#   Reject low-information / structural fragments discovered
+#   as dynamic labels while preserving meaningful invoice
+#   parameters.
+#
+# This layer:
+#   - does NOT retrain LayoutLMv3
+#   - does NOT modify model weights
+#   - does NOT alter trained 16-field extraction
+#   - does NOT alter GST / line-item / financial logic
+# ============================================================
+
+_AUTO_V8_SINGLE_TOKEN_REJECT = {
+    "add",
+    "in",
+    "out",
+    "at",
+    "by",
+    "on",
+    "as",
+    "for",
+    "with",
+    "without",
+    "against",
+    "through",
+    "via",
+    "per",
+    "page",
+    "date",
+    "name",
+    "type",
+    "item",
+    "items",
+    "particular",
+    "particulars",
+    "details",
+    "detail",
+    "remarks",
+    "remark",
+    "note",
+    "notes",
+    "total",
+    "basic",
+    "gross",
+    "net",
+    "invoice",
+    "bill",
+    "party",
+    "company",
+    "customer",
+    "vendor",
+    "supplier",
+    "buyer",
+    "seller",
+    "state",
+    "place",
+}
+
+_AUTO_V8_SAFE_SINGLE_TOKEN_LABELS = {
+    "gstin",
+    "pan",
+    "cin",
+    "cgst",
+    "sgst",
+    "igst",
+    "email",
+    "irn",
+    "hsn",
+    "sac",
+}
+
+_AUTO_V8_BAD_EXACT_LABELS = {
+    "add",
+    "in",
+    "from",
+    "to",
+    "date",
+    "remarks",
+    "remark",
+    "note",
+    "notes",
+    "basic total",
+    "total value",
+    "bill amount",
+    "invoice",
+    "bill",
+    "gst",
+}
+
+_AUTO_V8_TABLE_HEADER_LABELS = {
+    "description",
+    "item description",
+    "material description",
+    "material",
+    "material code",
+    "qty",
+    "quantity",
+    "rate",
+    "unit price",
+    "amount",
+    "line amount",
+    "uom",
+    "unit",
+    "hsn",
+    "sac",
+    "sl",
+    "sl no",
+    "serial no",
+}
+
+_AUTO_V8_MEANINGFUL_TOKENS = {
+    "number",
+    "no",
+    "code",
+    "date",
+    "name",
+    "mode",
+    "terms",
+    "address",
+    "email",
+    "phone",
+    "mobile",
+    "bank",
+    "account",
+    "ifsc",
+    "gstin",
+    "gst",
+    "pan",
+    "cin",
+    "irn",
+    "hsn",
+    "sac",
+    "eway",
+    "way",
+    "vehicle",
+    "ack",
+    "acknowledgement",
+    "po",
+    "purchase",
+    "order",
+    "gr",
+    "goods",
+    "receipt",
+    "delivery",
+    "state",
+    "supply",
+    "place",
+    "posting",
+    "freight",
+    "round",
+    "discount",
+    "taxable",
+    "tax",
+    "cgst",
+    "sgst",
+    "igst",
+    "amount",
+    "words",
+    "reference",
+    "ref",
+    "odn",
+    "payment",
+    "challan",
+    "lr",
+    "ewaybill",
+}
+
+
+def _auto_v8_label_has_semantic_value(
+    label,
+):
+    key = _auto_label_key(
+        label
+    )
+
+    if not key:
+        return False
+
+    if key in _AUTO_V8_BAD_EXACT_LABELS:
+        return False
+
+    if key in _AUTO_V8_TABLE_HEADER_LABELS:
+        return False
+
+    words = key.split()
+
+    if (
+        len(words) == 1
+        and
+        key in _AUTO_V8_SINGLE_TOKEN_REJECT
+        and
+        key not in _AUTO_V8_SAFE_SINGLE_TOKEN_LABELS
+    ):
+        return False
+
+    # Acronyms / identifiers that are valid by themselves.
+    if key in _AUTO_V8_SAFE_SINGLE_TOKEN_LABELS:
+        return True
+
+    # Two or more words are allowed when the phrase has
+    # invoice-specific semantic content.
+    if len(words) >= 2:
+
+        if any(
+            token
+            in
+            _AUTO_V8_MEANINGFUL_TOKENS
+            for token
+            in words
+        ):
+            return True
+
+        # Keep explicit percentage-bearing financial labels,
+        # e.g. "Discount @ 2.00%".
+        if re.search(
+            r"\d+(?:\.\d+)?\s*%",
+            str(label),
+        ):
+            return True
+
+        return False
+
+    return True
+
+
 def _auto_valid_label(value):
 
     label = _auto_normalize_label(
@@ -5288,6 +5602,11 @@ def _auto_valid_label(value):
         r"faithfully|only|subject|description"
         r")\b",
         key,
+    ):
+        return False
+
+    if not _auto_v8_label_has_semantic_value(
+        label
     ):
         return False
 
@@ -8108,6 +8427,539 @@ def _v7_reconcile_total(
     )
 
 
+# ============================================================
+# V8 STEP 2
+# FINAL OUTPUT CONSISTENCY + DYNAMIC VALUE QUALITY
+# ============================================================
+
+_V8_NOT_DETECTED_VALUES = {
+    "",
+    "not_detected",
+    "not detected",
+    "none",
+    "null",
+}
+
+_V8_BAD_DYNAMIC_VALUES = {
+    "date",
+    "description",
+    "amount",
+    "qty",
+    "quantity",
+    "rate",
+    "unit",
+    "uom",
+    "remarks",
+    "remark",
+    "basic total",
+    "subtotal",
+    "total",
+    "tax",
+    "cgst",
+    "sgst",
+    "igst",
+}
+
+
+def _v8_field_payload(
+    production_result,
+    field_name,
+):
+    if not isinstance(
+        production_result,
+        dict,
+    ):
+        return None
+
+    fields = production_result.get(
+        "fields",
+        {},
+    )
+
+    if not isinstance(
+        fields,
+        dict,
+    ):
+        return None
+
+    information = fields.get(
+        field_name
+    )
+
+    if isinstance(
+        information,
+        dict,
+    ):
+        return information
+
+    return None
+
+
+def _v8_field_is_missing(
+    information,
+):
+    if not isinstance(
+        information,
+        dict,
+    ):
+        return True
+
+    status = str(
+        information.get(
+            "status",
+            "",
+        )
+    ).strip().upper()
+
+    if status in {
+        "NOT_PRESENT",
+        "NOT_DETECTED",
+        "MISSING",
+        "ABSENT",
+    }:
+        return True
+
+    value = information.get(
+        "value"
+    )
+
+    if value is None:
+        return True
+
+    key = re.sub(
+        r"\s+",
+        " ",
+        str(value),
+    ).strip().casefold()
+
+    return (
+        key
+        in
+        _V8_NOT_DETECTED_VALUES
+    )
+
+
+def _v8_field_value(
+    production_result,
+    field_name,
+):
+    information = (
+        _v8_field_payload(
+            production_result,
+            field_name,
+        )
+    )
+
+    if _v8_field_is_missing(
+        information
+    ):
+        return None
+
+    return information.get(
+        "value"
+    )
+
+
+def _v8_iso_date(
+    value,
+):
+    if value is None:
+        return None
+
+    text = re.sub(
+        r"\s+",
+        " ",
+        str(value),
+    ).strip()
+
+    if not text:
+        return None
+
+    patterns = (
+        (
+            r"^(\d{2})[./-](\d{2})[./-](\d{4})$",
+            "DMY",
+        ),
+        (
+            r"^(\d{4})[./-](\d{2})[./-](\d{2})$",
+            "YMD",
+        ),
+    )
+
+    for pattern, mode in patterns:
+
+        match = re.fullmatch(
+            pattern,
+            text,
+        )
+
+        if not match:
+            continue
+
+        if mode == "DMY":
+            day, month, year = (
+                match.groups()
+            )
+
+        else:
+            year, month, day = (
+                match.groups()
+            )
+
+        try:
+            from datetime import date
+
+            parsed = date(
+                int(year),
+                int(month),
+                int(day),
+            )
+
+            return parsed.isoformat()
+
+        except Exception:
+            return None
+
+    return None
+
+
+def _v8_number_or_none(
+    value,
+):
+    if value is None:
+        return None
+
+    return _v7_number(
+        value
+    )
+
+
+def _v8_sync_normalized_from_final_fields(
+    production_result,
+):
+    """
+    The final trained/reconciled field map is the source of truth.
+
+    This prevents stale runtime-normalized values from disagreeing
+    with the final V7/V8 field values.
+    """
+
+    if not isinstance(
+        production_result,
+        dict,
+    ):
+        return
+
+    normalized = (
+        production_result.setdefault(
+            "normalized",
+            {},
+        )
+    )
+
+    if not isinstance(
+        normalized,
+        dict,
+    ):
+        normalized = {}
+
+        production_result[
+            "normalized"
+        ] = normalized
+
+    # --------------------------------------------------------
+    # IDENTIFIERS
+    # --------------------------------------------------------
+
+    invoice_number = (
+        _v8_field_value(
+            production_result,
+            "INVOICE_NUMBER",
+        )
+    )
+
+    normalized[
+        "invoice_number"
+    ] = (
+        str(invoice_number).strip()
+        if invoice_number is not None
+        else None
+    )
+
+    # --------------------------------------------------------
+    # DATES
+    # --------------------------------------------------------
+
+    invoice_date = (
+        _v8_field_value(
+            production_result,
+            "INVOICE_DATE",
+        )
+    )
+
+    due_date = (
+        _v8_field_value(
+            production_result,
+            "DUE_DATE",
+        )
+    )
+
+    normalized[
+        "invoice_date"
+    ] = (
+        _v8_iso_date(
+            invoice_date
+        )
+    )
+
+    normalized[
+        "due_date"
+    ] = (
+        _v8_iso_date(
+            due_date
+        )
+        if due_date is not None
+        else None
+    )
+
+    # --------------------------------------------------------
+    # CURRENCY
+    # --------------------------------------------------------
+
+    currency = (
+        _v8_field_value(
+            production_result,
+            "CURRENCY",
+        )
+    )
+
+    normalized[
+        "currency"
+    ] = (
+        str(currency).strip()
+        if currency is not None
+        else None
+    )
+
+    # --------------------------------------------------------
+    # FINANCIAL VALUES
+    # --------------------------------------------------------
+
+    mapping = {
+        "subtotal":
+            "SUBTOTAL",
+
+        "tax":
+            "TAX",
+
+        "discount":
+            "DISCOUNT",
+
+        "total_amount":
+            "TOTAL_AMOUNT",
+    }
+
+    for (
+        normalized_name,
+        field_name,
+    ) in mapping.items():
+
+        value = (
+            _v8_field_value(
+                production_result,
+                field_name,
+            )
+        )
+
+        normalized[
+            normalized_name
+        ] = (
+            _v8_number_or_none(
+                value
+            )
+            if value is not None
+            else None
+        )
+
+
+def _v8_clean_identifier_value(
+    field_name,
+    value,
+):
+    if value is None:
+        return value
+
+    text = re.sub(
+        r"\s+",
+        " ",
+        str(value),
+    ).strip()
+
+    if not text:
+        return text
+
+    name = str(
+        field_name
+    ).strip().casefold()
+
+    # --------------------------------------------------------
+    # CIN
+    #
+    # Example bad extraction:
+    # NO.L17299WB1993PLC058969
+    #
+    # Desired:
+    # L17299WB1993PLC058969
+    # --------------------------------------------------------
+
+    if name == "cin":
+
+        match = re.search(
+            r"\b[LU]\d{5}[A-Z]{2}\d{4}[A-Z]{3}\d{6}\b",
+            text.upper(),
+        )
+
+        if match:
+            return match.group(0)
+
+    # --------------------------------------------------------
+    # PAN
+    # --------------------------------------------------------
+
+    if name == "pan":
+
+        match = re.search(
+            r"\b[A-Z]{5}\d{4}[A-Z]\b",
+            text.upper(),
+        )
+
+        if match:
+            return match.group(0)
+
+    # --------------------------------------------------------
+    # GSTIN
+    # --------------------------------------------------------
+
+    if (
+        name == "gstin"
+        or
+        "gstin"
+        in name
+    ):
+
+        match = re.search(
+            r"\b\d{2}[A-Z]{5}\d{4}[A-Z][A-Z0-9]Z[A-Z0-9]\b",
+            text.upper(),
+        )
+
+        if match:
+            return match.group(0)
+
+    return text
+
+
+def _v8_clean_dynamic_values(
+    dynamic_fields,
+):
+    """
+    Conservative final dynamic-value cleanup.
+
+    Legitimate detected values are preserved.
+
+    Obvious structural/header values are not allowed to remain
+    confidently DETECTED.
+    """
+
+    if not isinstance(
+        dynamic_fields,
+        dict,
+    ):
+        return {}
+
+    for (
+        field_name,
+        information,
+    ) in list(
+        dynamic_fields.items()
+    ):
+
+        if not isinstance(
+            information,
+            dict,
+        ):
+            continue
+
+        value = information.get(
+            "value"
+        )
+
+        cleaned_value = (
+            _v8_clean_identifier_value(
+                field_name,
+                value,
+            )
+        )
+
+        information[
+            "value"
+        ] = cleaned_value
+
+        value_key = re.sub(
+            r"\s+",
+            " ",
+            str(
+                cleaned_value
+                if cleaned_value is not None
+                else ""
+            ),
+        ).strip().casefold()
+
+        # ----------------------------------------------------
+        # Never present obvious table/header fragments as a
+        # confident automatically extracted value.
+        # ----------------------------------------------------
+
+        if (
+            information.get(
+                "status"
+            )
+            ==
+            "DETECTED"
+            and
+            value_key
+            in
+            _V8_BAD_DYNAMIC_VALUES
+        ):
+
+            information[
+                "value"
+            ] = "NOT_DETECTED"
+
+            information[
+                "status"
+            ] = "AMBIGUOUS"
+
+            information[
+                "confidence"
+            ] = min(
+                float(
+                    information.get(
+                        "confidence",
+                        0.0,
+                    )
+                    or
+                    0.0
+                ),
+                0.49,
+            )
+
+            information[
+                "source"
+            ] = "V8_VALUE_QUALITY_REJECT"
+
+    return dynamic_fields
+
+
 def _v7_harden_result(
     input_path,
     production_result,
@@ -8157,7 +9009,28 @@ def _v7_harden_result(
         )
     )
 
+    # ========================================================
+    # V8 STEP 2
+    # Dynamic identifier cleanup + value quality validation.
+    # ========================================================
+
+    dynamic_fields = (
+        _v8_clean_dynamic_values(
+            dynamic_fields
+        )
+    )
+
     _v7_reconcile_total(
+        production_result
+    )
+
+    # ========================================================
+    # V8 STEP 2
+    # Final trained/reconciled fields are the source of truth
+    # for the normalized JSON section.
+    # ========================================================
+
+    _v8_sync_normalized_from_final_fields(
         production_result
     )
 
