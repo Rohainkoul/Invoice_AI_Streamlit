@@ -10769,6 +10769,299 @@ def _v82_sync_recovered_metadata(
                 ]
 
 
+
+# ============================================================
+# V8.3 FINAL OUTPUT POLISH
+#
+# Generic fixes only:
+#   1. Phone-number recovery from explicit phone labels
+#   2. Single-HSN propagation into structured line items
+#
+# No retraining.
+# No model changes.
+# ============================================================
+
+
+def _v83_recover_phone_number(
+    input_path,
+    dynamic_fields,
+):
+
+    if not isinstance(
+        dynamic_fields,
+        dict,
+    ):
+        dynamic_fields = {}
+
+    lines = (
+        _v81_document_lines(
+            input_path
+        )
+    )
+
+    pattern = re.compile(
+        r"(?i)"
+        r"\b(?:"
+        r"ph(?:one)?\.?\s*(?:no|number)?"
+        r"|mobile\s*(?:no|number)?"
+        r"|tel(?:ephone)?\.?\s*(?:no|number)?"
+        r")"
+        r"\s*[:=\-]?\s*"
+        r"("
+        r"(?:\+?\d{1,3}[\s\-]?)?"
+        r"(?:\d[\s\-]?){7,14}"
+        r")"
+    )
+
+    for line in lines:
+
+        text = re.sub(
+            r"\s+",
+            " ",
+            str(
+                line.get(
+                    "text",
+                    "",
+                )
+            ),
+        ).strip()
+
+        match = pattern.search(
+            text
+        )
+
+        if not match:
+            continue
+
+        value = (
+            match.group(1)
+            .strip(
+                " \t,;|"
+            )
+        )
+
+        digits = re.sub(
+            r"\D",
+            "",
+            value,
+        )
+
+        if len(digits) < 8:
+            continue
+
+        dynamic_fields[
+            "Phone Number"
+        ] = {
+            "value":
+                value,
+
+            "status":
+                "DETECTED",
+
+            "confidence":
+                1.0,
+
+            "page":
+                line.get(
+                    "page"
+                ),
+
+            "source":
+                "V8_3_EXPLICIT_PHONE_CONTEXT",
+
+            "evidence":
+                text,
+        }
+
+        return dynamic_fields
+
+    return dynamic_fields
+
+
+def _v83_detected_dynamic_value(
+    dynamic_fields,
+    names,
+):
+
+    if not isinstance(
+        dynamic_fields,
+        dict,
+    ):
+        return None
+
+    normalized_names = {
+        re.sub(
+            r"[^a-z0-9]+",
+            "",
+            str(name).lower(),
+        )
+        for name
+        in names
+    }
+
+    for key, information in (
+        dynamic_fields.items()
+    ):
+
+        normalized_key = re.sub(
+            r"[^a-z0-9]+",
+            "",
+            str(key).lower(),
+        )
+
+        if normalized_key not in normalized_names:
+            continue
+
+        if not isinstance(
+            information,
+            dict,
+        ):
+            continue
+
+        status = str(
+            information.get(
+                "status",
+                "",
+            )
+        ).upper()
+
+        value = information.get(
+            "value"
+        )
+
+        if status != "DETECTED":
+            continue
+
+        if value in {
+            None,
+            "",
+            "NOT_DETECTED",
+        }:
+            continue
+
+        return str(
+            value
+        ).strip()
+
+    return None
+
+
+def _v83_propagate_single_hsn(
+    production_result,
+    dynamic_fields,
+):
+
+    """
+    If one explicit HSN/SAC code applies to the whole invoice,
+    populate missing hsn_code values in structured line items.
+
+    Existing non-empty HSN values are never overwritten.
+    """
+
+    if not isinstance(
+        production_result,
+        dict,
+    ):
+        return
+
+    hsn = (
+        _v83_detected_dynamic_value(
+            dynamic_fields,
+            (
+                "HSN Code",
+                "HSN",
+                "HSN/SAC",
+                "HSN SAC",
+                "SAC Code",
+            ),
+        )
+    )
+
+    if not hsn:
+        return
+
+    normalized_hsn = re.sub(
+        r"\D",
+        "",
+        hsn,
+    )
+
+    if len(normalized_hsn) not in {
+        4,
+        6,
+        8,
+    }:
+        return
+
+    line_items = (
+        production_result.get(
+            "line_items"
+        )
+    )
+
+    if not isinstance(
+        line_items,
+        list,
+    ):
+        return
+
+    changed = False
+
+    for item in line_items:
+
+        if not isinstance(
+            item,
+            dict,
+        ):
+            continue
+
+        current = str(
+            item.get(
+                "hsn_code",
+                "",
+            )
+            or
+            ""
+        ).strip()
+
+        if current not in {
+            "",
+            "NOT_DETECTED",
+            "None",
+            "null",
+        }:
+            continue
+
+        item[
+            "hsn_code"
+        ] = normalized_hsn
+
+        item[
+            "hsn_source"
+        ] = (
+            "V8_3_SINGLE_DYNAMIC_HSN"
+        )
+
+        changed = True
+
+    if changed:
+
+        extraction = (
+            production_result.get(
+                "extraction_summary"
+            )
+        )
+
+        if isinstance(
+            extraction,
+            dict,
+        ):
+
+            extraction[
+                "hsn_line_item_propagation"
+            ] = True
+
+
 def _v7_harden_result(
     input_path,
     production_result,
@@ -10842,6 +11135,27 @@ def _v7_harden_result(
     )
 
     # ========================================================
+    # V8.3 FINAL OUTPUT POLISH
+    # ========================================================
+
+    dynamic_fields = (
+        _v83_recover_phone_number(
+            input_path,
+            dynamic_fields,
+        )
+    )
+
+    # Keep discovery metadata aligned with the final
+    # dynamically repaired field map.
+    if isinstance(
+        discovered_fields,
+        list,
+    ):
+        discovered_fields[:] = list(
+            dynamic_fields.keys()
+        )
+
+    # ========================================================
     # V8.1 CORE STRESS-TEST HARDENING
     # ========================================================
 
@@ -10866,6 +11180,11 @@ def _v7_harden_result(
 
     _v81_rebuild_line_items(
         production_result
+    )
+
+    _v83_propagate_single_hsn(
+        production_result,
+        dynamic_fields,
     )
 
     _v81_safe_adjustments(

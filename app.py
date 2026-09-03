@@ -298,7 +298,665 @@ st.html(
         visibility: hidden;
     }
 
-    </style>
+    
+
+    /* INVOICE AI FINAL UI POLISH */
+
+    div[data-baseweb="tab-list"] {
+        gap: 0.35rem;
+        background: rgba(255,255,255,0.72);
+        border: 1px solid #e5e7eb;
+        border-radius: 14px;
+        padding: 0.32rem;
+        margin-top: 0.35rem;
+        margin-bottom: 0.85rem;
+    }
+
+    button[data-baseweb="tab"] {
+        border-radius: 10px !important;
+        padding-left: 0.8rem !important;
+        padding-right: 0.8rem !important;
+        font-weight: 700 !important;
+        min-height: 42px;
+    }
+
+    button[data-baseweb="tab"][aria-selected="true"] {
+        background: #ffffff !important;
+        box-shadow:
+            0 3px 10px
+            rgba(17, 24, 39, 0.08);
+    }
+
+    .result-status-pass {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        background:
+            linear-gradient(
+                135deg,
+                #ecfdf5 0%,
+                #ffffff 100%
+            );
+        border: 1px solid #a7f3d0;
+        border-radius: 16px;
+        padding: 0.9rem 1rem;
+        margin: 0.3rem 0 1rem 0;
+    }
+
+    .result-status-review {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        background:
+            linear-gradient(
+                135deg,
+                #fff7ed 0%,
+                #ffffff 100%
+            );
+        border: 1px solid #fed7aa;
+        border-radius: 16px;
+        padding: 0.9rem 1rem;
+        margin: 0.3rem 0 1rem 0;
+    }
+
+    .status-icon-large {
+        font-size: 1.55rem;
+        line-height: 1;
+    }
+
+    .status-heading-pass {
+        font-size: 0.92rem;
+        font-weight: 800;
+        color: #047857;
+    }
+
+    .status-heading-review {
+        font-size: 0.92rem;
+        font-weight: 800;
+        color: #c2410c;
+    }
+
+    .status-subtext {
+        color: #6b7280;
+        font-size: 0.82rem;
+        margin-top: 0.12rem;
+    }
+
+    .quick-header {
+        background:
+            linear-gradient(
+                135deg,
+                #111827 0%,
+                #1f2937 100%
+            );
+        border-radius: 17px;
+        padding: 1rem 1.15rem;
+        margin-bottom: 1rem;
+        color: white;
+    }
+
+    .quick-header-title {
+        color: white;
+        font-size: 1.05rem;
+        font-weight: 800;
+    }
+
+    .quick-header-sub {
+        color: #d1d5db;
+        font-size: 0.84rem;
+        margin-top: 0.25rem;
+    }
+
+    .field-count-pill {
+        display: inline-block;
+        background: #f3f4f6;
+        color: #374151;
+        border: 1px solid #e5e7eb;
+        border-radius: 999px;
+        font-size: 0.75rem;
+        font-weight: 700;
+        padding: 0.28rem 0.62rem;
+        margin-bottom: 0.7rem;
+    }
+
+    .trained-badge {
+        display: inline-block;
+        padding: 0.2rem 0.5rem;
+        border-radius: 999px;
+        background: #eff6ff;
+        color: #1d4ed8;
+        font-size: 0.72rem;
+        font-weight: 700;
+    }
+
+    .dynamic-badge {
+        display: inline-block;
+        padding: 0.2rem 0.5rem;
+        border-radius: 999px;
+        background: #f5f3ff;
+        color: #7c3aed;
+        font-size: 0.72rem;
+        font-weight: 700;
+    }
+
+    div[data-testid="stDataFrame"] {
+        box-shadow:
+            0 6px 22px
+            rgba(17, 24, 39, 0.045);
+    }
+
+    div[data-testid="stMetric"] label {
+        font-weight: 700 !important;
+    }
+
+
+    
+
+    /* INVOICE AI COMPLETE UI V2 */
+
+    :root {
+        --card-bg: rgba(255, 255, 255, 0.96);
+        --card-border: #e5e7eb;
+        --text-main: #111827;
+        --text-muted: #6b7280;
+        --accent: #ef4444;
+        --accent-soft: #fff1f2;
+        --success: #059669;
+        --success-soft: #ecfdf5;
+        --warning: #d97706;
+        --warning-soft: #fffbeb;
+    }
+
+    .stApp {
+        background:
+            radial-gradient(
+                circle at 92% 4%,
+                rgba(239,68,68,0.08),
+                transparent 31rem
+            ),
+            radial-gradient(
+                circle at 4% 90%,
+                rgba(59,130,246,0.045),
+                transparent 34rem
+            ),
+            #f8fafc;
+    }
+
+    .block-container {
+        max-width: 1500px;
+        padding-top: 1.15rem;
+        padding-bottom: 4rem;
+    }
+
+
+    /* ========================================================
+       HERO
+       ======================================================== */
+
+    .hero {
+        position: relative;
+        overflow: hidden;
+
+        background:
+            linear-gradient(
+                125deg,
+                #0f172a 0%,
+                #111827 53%,
+                #3f1d28 100%
+            );
+
+        color: white;
+
+        border:
+            1px solid
+            rgba(255,255,255,0.08);
+
+        border-radius: 24px;
+
+        padding:
+            2rem
+            2.15rem;
+
+        margin-bottom: 1.45rem;
+
+        box-shadow:
+            0 18px 45px
+            rgba(15,23,42,0.15);
+    }
+
+    .hero::after {
+        content: "";
+        position: absolute;
+
+        width: 330px;
+        height: 330px;
+
+        border-radius: 50%;
+
+        right: -120px;
+        top: -180px;
+
+        background:
+            radial-gradient(
+                circle,
+                rgba(248,113,113,0.24),
+                rgba(248,113,113,0)
+            );
+    }
+
+    .hero-kicker {
+        color: #fca5a5;
+        font-size: 0.73rem;
+        font-weight: 800;
+        letter-spacing: 0.15em;
+        text-transform: uppercase;
+        margin-bottom: 0.55rem;
+    }
+
+    .hero-title {
+        color: white;
+        font-size: 2.35rem;
+        font-weight: 850;
+        line-height: 1.1;
+    }
+
+    .hero-sub {
+        color: #d1d5db;
+        font-size: 0.98rem;
+        line-height: 1.65;
+        max-width: 900px;
+        margin-top: 0.72rem;
+    }
+
+    .status-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+
+        margin-top: 1rem;
+
+        background:
+            rgba(255,255,255,0.08);
+
+        border:
+            1px solid
+            rgba(255,255,255,0.14);
+
+        border-radius: 999px;
+
+        padding:
+            0.42rem
+            0.8rem;
+
+        color: #f3f4f6;
+
+        font-size: 0.8rem;
+        font-weight: 600;
+    }
+
+    .status-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: #34d399;
+
+        box-shadow:
+            0 0 0 4px
+            rgba(52,211,153,0.12);
+    }
+
+
+    /* ========================================================
+       SIDEBAR
+       ======================================================== */
+
+    [data-testid="stSidebar"] {
+        background:
+            linear-gradient(
+                180deg,
+                #ffffff 0%,
+                #fafafa 100%
+            );
+
+        border-right:
+            1px solid #e5e7eb;
+    }
+
+    [data-testid="stSidebar"] hr {
+        border-color: #e5e7eb;
+    }
+
+
+    /* ========================================================
+       CARDS / METRICS
+       ======================================================== */
+
+    div[data-testid="stMetric"] {
+        background: var(--card-bg);
+
+        border:
+            1px solid
+            var(--card-border);
+
+        border-radius: 17px;
+
+        padding:
+            0.9rem
+            1rem;
+
+        min-height: 100px;
+
+        box-shadow:
+            0 5px 18px
+            rgba(15,23,42,0.045);
+
+        transition:
+            transform 0.15s ease,
+            box-shadow 0.15s ease;
+    }
+
+    div[data-testid="stMetric"]:hover {
+        transform: translateY(-1px);
+
+        box-shadow:
+            0 8px 24px
+            rgba(15,23,42,0.07);
+    }
+
+    div[data-testid="stMetric"] label {
+        color: #64748b !important;
+        font-weight: 700 !important;
+        font-size: 0.78rem !important;
+    }
+
+    div[data-testid="stMetricValue"] {
+        color: #111827 !important;
+        font-weight: 760 !important;
+    }
+
+
+    /* ========================================================
+       FILE UPLOADER
+       ======================================================== */
+
+    div[data-testid="stFileUploader"] {
+        background:
+            linear-gradient(
+                135deg,
+                #ffffff 0%,
+                #fafafa 100%
+            );
+
+        border:
+            1px solid #e2e8f0;
+
+        border-radius: 20px;
+
+        padding:
+            0.65rem
+            1rem
+            1rem
+            1rem;
+
+        box-shadow:
+            0 6px 22px
+            rgba(15,23,42,0.04);
+    }
+
+    section[data-testid="stFileUploaderDropzone"] {
+        border-radius: 15px !important;
+        border: 1.5px dashed #cbd5e1 !important;
+        background: #f8fafc !important;
+    }
+
+
+    /* ========================================================
+       BUTTONS
+       ======================================================== */
+
+    div.stButton > button {
+        border-radius: 12px;
+        min-height: 46px;
+        font-weight: 750;
+        transition: all 0.15s ease;
+    }
+
+    div.stButton > button[kind="primary"] {
+        box-shadow:
+            0 5px 15px
+            rgba(239,68,68,0.18);
+    }
+
+    div.stDownloadButton > button {
+        border-radius: 12px;
+        min-height: 44px;
+        font-weight: 700;
+    }
+
+
+    /* ========================================================
+       TABS
+       ======================================================== */
+
+    div[data-baseweb="tab-list"] {
+        gap: 0.22rem;
+
+        background:
+            rgba(255,255,255,0.82);
+
+        padding:
+            0.34rem;
+
+        border:
+            1px solid #e5e7eb;
+
+        border-radius: 14px;
+
+        margin-top: 0.8rem;
+        margin-bottom: 1rem;
+
+        box-shadow:
+            0 3px 12px
+            rgba(15,23,42,0.035);
+    }
+
+    button[data-baseweb="tab"] {
+        border-radius: 10px !important;
+
+        padding:
+            0.45rem
+            0.72rem !important;
+
+        font-weight: 650 !important;
+
+        color: #475569 !important;
+    }
+
+    button[data-baseweb="tab"][aria-selected="true"] {
+        color: #dc2626 !important;
+        background: #fff1f2 !important;
+
+        box-shadow:
+            inset 0 0 0 1px
+            rgba(239,68,68,0.18);
+    }
+
+
+    /* ========================================================
+       TABLES
+       ======================================================== */
+
+    div[data-testid="stDataFrame"] {
+        border:
+            1px solid #e5e7eb;
+
+        border-radius: 14px;
+
+        overflow: hidden;
+
+        box-shadow:
+            0 5px 18px
+            rgba(15,23,42,0.035);
+    }
+
+
+    /* ========================================================
+       STATUS BANNERS
+       ======================================================== */
+
+    .result-banner {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+
+        gap: 1rem;
+
+        border-radius: 18px;
+
+        padding:
+            1rem
+            1.15rem;
+
+        margin:
+            0.25rem
+            0
+            1rem
+            0;
+    }
+
+    .result-banner-pass {
+        background:
+            linear-gradient(
+                135deg,
+                #ecfdf5,
+                #ffffff
+            );
+
+        border:
+            1px solid #a7f3d0;
+    }
+
+    .result-banner-review {
+        background:
+            linear-gradient(
+                135deg,
+                #fff7ed,
+                #ffffff
+            );
+
+        border:
+            1px solid #fed7aa;
+    }
+
+    .result-banner-title {
+        font-weight: 800;
+        font-size: 0.96rem;
+        color: #111827;
+    }
+
+    .result-banner-sub {
+        color: #64748b;
+        font-size: 0.81rem;
+        margin-top: 0.2rem;
+    }
+
+    .result-chip {
+        border-radius: 999px;
+
+        padding:
+            0.3rem
+            0.7rem;
+
+        font-weight: 800;
+        font-size: 0.72rem;
+    }
+
+    .result-chip-pass {
+        background: #d1fae5;
+        color: #047857;
+    }
+
+    .result-chip-review {
+        background: #ffedd5;
+        color: #c2410c;
+    }
+
+
+    /* ========================================================
+       QUICK VIEW
+       ======================================================== */
+
+    .quick-panel {
+        background:
+            linear-gradient(
+                135deg,
+                #111827,
+                #1f2937
+            );
+
+        color: white;
+
+        border-radius: 18px;
+
+        padding:
+            1.15rem
+            1.25rem;
+
+        margin-bottom: 1rem;
+
+        box-shadow:
+            0 8px 25px
+            rgba(15,23,42,0.12);
+    }
+
+    .quick-panel-title {
+        color: white;
+        font-size: 1.08rem;
+        font-weight: 800;
+    }
+
+    .quick-panel-sub {
+        color: #cbd5e1;
+        font-size: 0.83rem;
+        margin-top: 0.25rem;
+    }
+
+
+    /* ========================================================
+       SECTION HEADERS
+       ======================================================== */
+
+    .section-title {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+
+        font-size: 1.18rem;
+        font-weight: 800;
+
+        color: #1e293b;
+
+        margin-top: 0.3rem;
+        margin-bottom: 0.25rem;
+    }
+
+    .section-subtitle {
+        color: #64748b;
+        font-size: 0.84rem;
+        margin-bottom: 0.85rem;
+    }
+
+
+    /* ========================================================
+       STREAMLIT CLEANUP
+       ======================================================== */
+
+    footer {
+        visibility: hidden;
+    }
+
+
+</style>
     """
 )
 
@@ -3195,11 +3853,15 @@ def render_line_items(
 # RESULTS
 # ============================================================
 
+
 def render_results(
     result,
 ):
     """
-    Render ONE unified Invoice AI V3 Dynamic result.
+    Final production result interface.
+
+    FRONTEND ONLY.
+    No extraction or inference changes.
     """
 
     core_result = production_payload(
@@ -3218,13 +3880,312 @@ def render_results(
         result
     )
 
-    st.success(
-        "? Invoice processed successfully"
-    )
+
+    # ========================================================
+    # SAFE FIELD VALUE EXTRACTOR
+    # ========================================================
+
+    def field_value(
+        information,
+    ):
+
+        if information is None:
+            return "Not present"
+
+        status = ""
+
+        if isinstance(
+            information,
+            dict,
+        ):
+
+            status = str(
+                information.get(
+                    "status",
+                    "",
+                )
+                or
+                ""
+            ).upper()
+
+            value = information.get(
+                "value"
+            )
+
+            if value is None:
+
+                for key in VALUE_KEYS:
+
+                    candidate = information.get(
+                        key
+                    )
+
+                    if candidate not in (
+                        None,
+                        "",
+                    ):
+                        value = candidate
+                        break
+
+        else:
+
+            value = information
+
+
+        # ----------------------------------------------------
+        # CLEAN BUSINESS-FACING MISSING VALUES
+        # ----------------------------------------------------
+
+        missing_values = {
+            None,
+            "",
+            "?",
+            "??",
+            "???",
+            "NOT_DETECTED",
+            "NOT_PRESENT",
+            "NONE",
+            "NULL",
+            "N/A",
+            "NA",
+        }
+
+        value_text = (
+            str(value).strip()
+            if value is not None
+            else
+            ""
+        )
+
+        is_simple_missing = (
+            value is None
+            or
+            (
+                isinstance(
+                    value,
+                    (
+                        str,
+                        int,
+                        float,
+                        bool,
+                    ),
+                )
+                and
+                value_text.upper()
+                in {
+                    "",
+                    "?",
+                    "??",
+                    "???",
+                    "NOT_DETECTED",
+                    "NOT_PRESENT",
+                    "NONE",
+                    "NULL",
+                    "N/A",
+                    "NA",
+                }
+            )
+        )
+
+        if (
+            is_simple_missing
+            or
+            status
+            in {
+                "NOT_PRESENT",
+                "NOT_DETECTED",
+                "NO_EVIDENCE",
+            }
+        ):
+            return "Not present"
+
+
+        if isinstance(
+            value,
+            list,
+        ):
+
+            cleaned = []
+
+            for item in value:
+
+                item_text = str(
+                    item
+                ).strip()
+
+                if (
+                    not item_text
+                    or
+                    item_text
+                    in {
+                        "?",
+                        "??",
+                        "???",
+                    }
+                    or
+                    item_text.upper()
+                    in {
+                        "NOT_DETECTED",
+                        "NOT_PRESENT",
+                        "NONE",
+                        "NULL",
+                        "N/A",
+                        "NA",
+                    }
+                ):
+                    cleaned.append(
+                        "Not present"
+                    )
+
+                else:
+                    cleaned.append(
+                        item_text
+                    )
+
+            return " | ".join(
+                cleaned
+            )
+
+
+        if isinstance(
+            value,
+            dict,
+        ):
+
+            return json.dumps(
+                value,
+                ensure_ascii=False,
+            )
+
+
+        return value_text
+
+
+    def named_value(
+        key,
+    ):
+
+        return field_value(
+            all_fields.get(
+                key
+            )
+        )
+
+
+    # ========================================================
+    # STATUS
+    # ========================================================
+
+    result_status = str(
+        result.get(
+            "status",
+            "",
+        )
+        if isinstance(
+            result,
+            dict,
+        )
+        else
+        ""
+    ).upper()
+
+
+    if not result_status:
+
+        validation = (
+            result.get(
+                "validation",
+                {},
+            )
+            if isinstance(
+                result,
+                dict,
+            )
+            else
+            {}
+        )
+
+        if isinstance(
+            validation,
+            dict,
+        ):
+
+            result_status = str(
+                validation.get(
+                    "overall_status",
+                    "",
+                )
+            ).upper()
+
+
+    if result_status == "PASS":
+
+        render_html(
+            """
+            <div class="result-banner result-banner-pass">
+
+                <div>
+                    <div class="result-banner-title">
+                        Invoice extraction completed successfully
+                    </div>
+
+                    <div class="result-banner-sub">
+                        Core extraction and production validation
+                        completed without blocking issues.
+                    </div>
+                </div>
+
+                <div class="result-chip result-chip-pass">
+                    PASS
+                </div>
+
+            </div>
+            """
+        )
+
+    else:
+
+        safe_status = html.escape(
+            result_status
+            or
+            "REVIEW_REQUIRED"
+        )
+
+        render_html(
+            f"""
+            <div class="result-banner result-banner-review">
+
+                <div>
+                    <div class="result-banner-title">
+                        Invoice processed successfully
+                    </div>
+
+                    <div class="result-banner-sub">
+                        Some extracted information should be reviewed.
+                    </div>
+                </div>
+
+                <div class="result-chip result-chip-review">
+                    {safe_status}
+                </div>
+
+            </div>
+            """
+        )
+
+
+    # ========================================================
+    # CORE SUMMARY
+    # ========================================================
 
     render_summary(
         trained_fields
     )
+
+
+    # ========================================================
+    # COUNTERS
+    # ========================================================
 
     field_summary = (
         result.get(
@@ -3239,92 +4200,88 @@ def render_results(
         {}
     )
 
-    total_fields = (
-        field_summary.get(
-            "total_fields",
-            len(
-                all_fields
-            ),
-        )
+    total_fields = field_summary.get(
+        "total_fields",
+        len(all_fields),
     )
 
-    trained_count = (
-        field_summary.get(
-            "trained_schema_fields",
-            len(
-                trained_fields
-            ),
-        )
+    trained_count = field_summary.get(
+        "trained_schema_fields",
+        len(trained_fields),
     )
 
-    dynamic_count = (
-        field_summary.get(
-            "auto_dynamic_fields",
-            len(
-                dynamic_fields
-            ),
-        )
+    dynamic_count = field_summary.get(
+        "auto_dynamic_fields",
+        len(dynamic_fields),
     )
 
-    resolved_count = (
-        field_summary.get(
-            "resolved_fields",
-            0,
-        )
+    resolved_count = field_summary.get(
+        "resolved_fields",
+        0,
     )
 
-    metric1, metric2, metric3, metric4 = (
-        st.columns(
-            4
-        )
+
+    m1, m2, m3, m4 = st.columns(
+        4
     )
 
-    metric1.metric(
-        "Unified Fields",
+    m1.metric(
+        "\U0001F4CB  Unified Fields",
         total_fields,
     )
 
-    metric2.metric(
-        "Trained Fields",
+    m2.metric(
+        "\U0001F9E0  Trained Fields",
         trained_count,
     )
 
-    metric3.metric(
-        "Dynamic Fields",
+    m3.metric(
+        "\u2728  Dynamic Fields",
         dynamic_count,
     )
 
-    metric4.metric(
-        "Resolved Fields",
+    m4.metric(
+        "\u2705  Resolved Fields",
         resolved_count,
     )
+
+
+    # ========================================================
+    # TABS
+    # ========================================================
 
     (
         tab_all,
         tab_trained,
         tab_dynamic,
         tab_items,
+        tab_quick,
         tab_json,
     ) = st.tabs(
         [
-            "Unified Fields",
-            "Trained Schema",
-            "Dynamic Fields",
-            "Line Items",
-            "Final JSON",
+            "\U0001F4CB Unified Fields",
+            "\U0001F9E0 Trained Schema",
+            "\u2728 Dynamic Fields",
+            "\U0001F9FE Line Items",
+            "\U0001F441 Quick View",
+            "\U0001F9E9 Final JSON",
         ]
     )
 
 
+    # ========================================================
+    # UNIFIED FIELDS
+    # ========================================================
+
     with tab_all:
 
         st.markdown(
-            "#### Unified Invoice Fields"
+            "### \U0001F4CB Unified Invoice Fields"
         )
 
         st.caption(
-            "Trained LayoutLMv3 fields and automatically "
-            "discovered fields are merged into one result."
+            "One combined view containing trained fields "
+            "and automatically discovered dynamic fields."
         )
 
         rows = []
@@ -3339,53 +4296,74 @@ def render_results(
                 dict,
             ):
 
-                value = display_value(
-                    information
+                origin = str(
+                    information.get(
+                        "origin",
+                        "",
+                    )
+                    or
+                    ""
                 )
 
-                origin = information.get(
-                    "origin",
-                    "",
+                status = str(
+                    information.get(
+                        "status",
+                        "",
+                    )
+                    or
+                    ""
                 )
 
-                status = information.get(
-                    "status",
-                    "",
-                )
-
-                source = information.get(
-                    "source",
-                    "",
+                source_name = str(
+                    information.get(
+                        "source",
+                        "",
+                    )
+                    or
+                    ""
                 )
 
             else:
 
-                value = display_value(
-                    information
-                )
-
                 origin = ""
                 status = ""
-                source = ""
+                source_name = ""
+
+
+            if origin == "TRAINED_SCHEMA":
+                origin_text = "Trained"
+
+            elif origin == "AUTO_DYNAMIC":
+                origin_text = "Dynamic"
+
+            else:
+                origin_text = origin or "?"
+
 
             rows.append(
                 {
                     "Field":
-                        field_name,
+                        FIELD_LABELS.get(
+                            field_name,
+                            field_name,
+                        ),
 
                     "Value":
-                        value,
+                        field_value(
+                            information
+                        ),
 
-                    "Origin":
-                        origin,
+                    "Type":
+                        origin_text,
 
                     "Status":
-                        status,
+                        status or "?",
 
                     "Source":
-                        source,
+                        source_name or "?",
                 }
             )
+
 
         st.dataframe(
             pd.DataFrame(
@@ -3396,14 +4374,19 @@ def render_results(
         )
 
 
+    # ========================================================
+    # TRAINED FIELDS
+    # ========================================================
+
     with tab_trained:
 
         st.markdown(
-            "#### LayoutLMv3 Trained Schema"
+            "### \U0001F9E0 LayoutLMv3 Trained Schema"
         )
 
         st.caption(
-            "The fixed 16-field neural extraction schema."
+            "The fixed neural extraction schema containing "
+            "the 16 trained invoice fields."
         )
 
         render_fields(
@@ -3411,16 +4394,19 @@ def render_results(
         )
 
 
+    # ========================================================
+    # DYNAMIC FIELDS
+    # ========================================================
+
     with tab_dynamic:
 
         st.markdown(
-            "#### Automatically Discovered Fields"
+            "### \u2728 Automatically Discovered Fields"
         )
 
         st.caption(
-            "Additional invoice parameters discovered "
-            "by the inference engine automatically. "
-            "No manual field list was supplied."
+            "Additional parameters discovered automatically "
+            "by the inference engine at runtime."
         )
 
         discovered = (
@@ -3436,28 +4422,39 @@ def render_results(
             []
         )
 
+
         if discovered:
 
             with st.expander(
-                "Auto-discovered schema",
+                f"Detected dynamic schema ({len(discovered)} fields)",
                 expanded=False,
             ):
 
                 for field in discovered:
 
                     st.write(
-                        f"? {field}"
+                        f"- {field}"
                     )
+
 
         render_dynamic_fields(
             dynamic_fields
         )
 
 
+    # ========================================================
+    # LINE ITEMS
+    # ========================================================
+
     with tab_items:
 
         st.markdown(
-            "#### Material / Line-Item Extraction"
+            "### \U0001F9FE Structured Line Items"
+        )
+
+        st.caption(
+            "Material, quantity, unit price and line-value "
+            "information recovered from the invoice."
         )
 
         render_line_items(
@@ -3465,21 +4462,236 @@ def render_results(
         )
 
 
-    with tab_json:
+    # ========================================================
+    # QUICK VIEW
+    # ========================================================
+
+    with tab_quick:
+
+        render_html(
+            """
+            <div class="quick-panel">
+
+                <div class="quick-panel-title">
+                    &#128065; Invoice Quick View
+                </div>
+
+                <div class="quick-panel-sub">
+                    A simplified business-facing view of the
+                    extracted invoice without opening the JSON.
+                </div>
+
+            </div>
+            """
+        )
+
+
+        q1, q2, q3 = st.columns(
+            3
+        )
+
+        q1.metric(
+            "\U0001F3E2  Vendor",
+            named_value(
+                "VENDOR_NAME"
+            ),
+        )
+
+        q2.metric(
+            "\U0001F9FE  Invoice Number",
+            named_value(
+                "INVOICE_NUMBER"
+            ),
+        )
+
+        q3.metric(
+            "\U0001F4C5  Invoice Date",
+            named_value(
+                "INVOICE_DATE"
+            ),
+        )
+
+
+        q4, q5, q6 = st.columns(
+            3
+        )
+
+        q4.metric(
+            "\U0001F464  Customer",
+            named_value(
+                "CUSTOMER_NAME"
+            ),
+        )
+
+        q5.metric(
+            "\U0001F4B1  Currency",
+            named_value(
+                "CURRENCY"
+            ),
+        )
+
+        q6.metric(
+            "\U0001F4B0  Total Amount",
+            named_value(
+                "TOTAL_AMOUNT"
+            ),
+        )
+
 
         st.markdown(
-            "#### Final Unified JSON"
+            "### \U0001F5C2 All Extracted Fields"
         )
 
         st.caption(
-            "This is the single production JSON returned "
-            "by Invoice_AI_V3_Dynamic_Production."
+            "Simple Field / Value view for business users."
+        )
+
+
+        quick_rows = []
+
+        for (
+            field_name,
+            information,
+        ) in all_fields.items():
+
+            if isinstance(
+                information,
+                dict,
+            ):
+
+                origin = str(
+                    information.get(
+                        "origin",
+                        "",
+                    )
+                    or
+                    ""
+                )
+
+            else:
+
+                origin = ""
+
+
+            field_type = (
+                "Trained"
+                if origin == "TRAINED_SCHEMA"
+                else
+                "Dynamic"
+                if origin == "AUTO_DYNAMIC"
+                else
+                origin
+                or
+                "?"
+            )
+
+
+            quick_rows.append(
+                {
+                    "Field":
+                        FIELD_LABELS.get(
+                            field_name,
+                            field_name,
+                        ),
+
+                    "Value":
+                        field_value(
+                            information
+                        ),
+
+                    "Type":
+                        field_type,
+                }
+            )
+
+
+        quick_dataframe = (
+            pd.DataFrame(
+                quick_rows
+            )
+        )
+
+
+        st.dataframe(
+            quick_dataframe,
+            use_container_width=True,
+            hide_index=True,
+            height=min(
+                850,
+                80
+                +
+                len(
+                    quick_dataframe
+                )
+                *
+                35,
+            ),
+        )
+
+
+        line_items = (
+            core_result.get(
+                "line_items",
+                [],
+            )
+            if isinstance(
+                core_result,
+                dict,
+            )
+            else
+            []
+        )
+
+
+        if (
+            isinstance(
+                line_items,
+                list,
+            )
+            and
+            line_items
+        ):
+
+            st.markdown(
+                "### \U0001F6D2 Line Items"
+            )
+
+            st.caption(
+                f"{len(line_items)} structured line item(s)"
+            )
+
+            st.dataframe(
+                pd.DataFrame(
+                    line_items
+                ),
+                use_container_width=True,
+                hide_index=True,
+            )
+
+
+    # ========================================================
+    # FINAL JSON
+    # ========================================================
+
+    with tab_json:
+
+        st.markdown(
+            "### \U0001F9E9 Final Unified JSON"
+        )
+
+        st.caption(
+            "Complete production JSON returned by "
+            "Invoice_AI_V3_Dynamic_Production."
         )
 
         st.json(
             result
         )
 
+
+    # ========================================================
+    # DOWNLOAD
+    # ========================================================
 
     json_bytes = (
         json.dumps(
@@ -3492,8 +4704,9 @@ def render_results(
         )
     )
 
+
     st.download_button(
-        "? Download Unified JSON",
+        "\u2B07 Download Unified JSON",
         data=json_bytes,
         file_name=
             "invoice_ai_v3_dynamic_result.json",
@@ -3518,7 +4731,7 @@ render_html(
     <div class="hero">
 
         <div class="hero-kicker">
-            Production Document Intelligence
+            AI-Powered Document Intelligence
         </div>
 
         <div class="hero-title">
@@ -3536,7 +4749,7 @@ render_html(
 
             <span class="status-dot"></span>
 
-            Automatic dynamic-field discovery enabled
+            Production engine ready ? Dynamic discovery enabled
 
         </div>
 
