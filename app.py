@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import html
 import json
@@ -49,13 +49,39 @@ def _prepare_streamlit_headless_opencv():
         / "invoice_ai_opencv_standard_headless"
     )
 
-    marker = (
-        target
-        / ".ready"
-    )
+    marker = target / ".ready"
 
-    # Install into writable /tmp instead of Streamlit's
-    # read-only managed virtual environment.
+    # --------------------------------------------------------
+    # STREAMLIT RERUN SAFETY
+    # --------------------------------------------------------
+    # If cv2 is already loaded successfully, NEVER unload or
+    # re-import it. Streamlit reruns app.py in the same process.
+    # --------------------------------------------------------
+
+    existing_cv2 = sys.modules.get("cv2")
+
+    if existing_cv2 is not None:
+        existing_file = str(
+            getattr(
+                existing_cv2,
+                "__file__",
+                "",
+            )
+            or
+            ""
+        )
+
+        if (
+            "invoice_ai_opencv_standard_headless"
+            in
+            existing_file
+        ):
+            return
+
+    # --------------------------------------------------------
+    # INSTALL HEADLESS OPENCV INTO WRITABLE /tmp
+    # --------------------------------------------------------
+
     if not marker.exists():
 
         print(
@@ -88,8 +114,10 @@ def _prepare_streamlit_headless_opencv():
             encoding="utf-8",
         )
 
-    # Our isolated package must come before PaddleX's GUI
-    # opencv-contrib-python installation.
+    # --------------------------------------------------------
+    # PUT ISOLATED HEADLESS BUILD FIRST
+    # --------------------------------------------------------
+
     target_string = str(target)
 
     if target_string in sys.path:
@@ -102,20 +130,12 @@ def _prepare_streamlit_headless_opencv():
         target_string,
     )
 
-    # Ensure an earlier failed/partial cv2 import cannot survive.
-    for module_name in list(sys.modules):
-        if (
-            module_name == "cv2"
-            or
-            module_name.startswith(
-                "cv2."
-            )
-        ):
-            del sys.modules[
-                module_name
-            ]
-
     importlib.invalidate_caches()
+
+    # Important:
+    # Do NOT delete cv2 from sys.modules here.
+    # Re-importing OpenCV's extension inside the same Streamlit
+    # process caused the GAPI typing error we just observed.
 
     import cv2
 
