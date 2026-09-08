@@ -25,4 +25,3 @@ shapely==2.1.2
 pyclipper==1.4.0
 python-bidi==0.6.11
 torchvision
-opencv-python-headless==4.10.0.84
