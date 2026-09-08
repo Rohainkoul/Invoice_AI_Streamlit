@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import html
 import json
@@ -44,70 +44,89 @@ def _prepare_streamlit_headless_opencv():
     if os.name == "nt":
         return
 
-    marker_path = (
+    target = (
         Path(tempfile.gettempdir())
-        / "invoice_ai_cv2_headless_ready_v1"
+        / "invoice_ai_opencv_headless"
     )
 
-    # Streamlit reruns app.py frequently.
-    # Do the package correction only once per container.
-    if marker_path.exists():
-        return
+    marker = (
+        target
+        / ".ready"
+    )
 
-    print("Preparing server-safe OpenCV runtime...")
+    # Install into writable /tmp instead of Streamlit's
+    # read-only managed virtual environment.
+    if not marker.exists():
 
-    # PaddleX can install the GUI OpenCV wheel transitively.
-    # Remove GUI variants first because all OpenCV wheels share
-    # the same `cv2` namespace.
-    for package_name in (
-        "opencv-contrib-python",
-        "opencv-python",
-    ):
+        print(
+            "Preparing isolated headless OpenCV runtime..."
+        )
+
+        target.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
         subprocess.run(
             [
                 sys.executable,
                 "-m",
                 "pip",
-                "uninstall",
-                "-y",
-                package_name,
+                "install",
+                "--disable-pip-version-check",
+                "--no-deps",
+                "--target",
+                str(target),
+                "--upgrade",
+                "opencv-contrib-python-headless==4.10.0.84",
             ],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            check=False,
+            check=True,
         )
 
-    # Reinstall the single cloud-safe implementation after the
-    # GUI uninstall, because uninstalling overlapping OpenCV
-    # wheels can remove shared cv2 files.
-    subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "pip",
-            "install",
-            "--disable-pip-version-check",
-            "--no-deps",
-            "--force-reinstall",
-            "opencv-contrib-python-headless==4.10.0.84",
-        ],
-        check=True,
+        marker.write_text(
+            "ready",
+            encoding="utf-8",
+        )
+
+    # Our isolated package must come before PaddleX's GUI
+    # opencv-contrib-python installation.
+    target_string = str(target)
+
+    if target_string in sys.path:
+        sys.path.remove(
+            target_string
+        )
+
+    sys.path.insert(
+        0,
+        target_string,
     )
+
+    # Ensure an earlier failed/partial cv2 import cannot survive.
+    for module_name in list(sys.modules):
+        if (
+            module_name == "cv2"
+            or
+            module_name.startswith(
+                "cv2."
+            )
+        ):
+            del sys.modules[
+                module_name
+            ]
 
     importlib.invalidate_caches()
 
-    # Fail here with a clear error instead of much later inside
-    # PaddleOCR / Transformers.
     import cv2
 
     print(
-        "OpenCV ready:",
+        "? Isolated OpenCV ready:",
         cv2.__version__,
     )
 
-    marker_path.write_text(
-        "ready",
-        encoding="utf-8",
+    print(
+        "? OpenCV loaded from:",
+        cv2.__file__,
     )
 
 
