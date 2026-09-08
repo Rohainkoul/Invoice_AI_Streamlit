@@ -14511,3 +14511,394 @@ def process_invoice_latest(
 # ============================================================
 # END INVOICE AI V3 ? UNIFIED DYNAMIC PRODUCTION LAYER
 # ============================================================
+
+# ============================================================
+# V8.6 CUSTOMER "TO / BILL TO" ADDRESS FINAL GUARD
+# ============================================================
+#
+# Purpose:
+#   Prevent vendor/header address from being returned as ADDRESS
+#   when the document contains an explicit customer To/Bill To
+#   block.
+#
+# This does NOT modify:
+#   - LayoutLMv3 weights
+#   - trained schema
+#   - GST reconciliation
+#   - line items
+#   - dynamic discovery
+#   - financial reconciliation
+#
+# It runs only after the complete production result exists.
+# ============================================================
+
+_PROCESS_INVOICE_DYNAMIC_FINAL_BEFORE_V86_ADDRESS_FIX = (
+    process_invoice_dynamic_final
+)
+
+
+def _v86_clean_block_line(value):
+    import re
+
+    text = re.sub(
+        r"\s+",
+        " ",
+        str(value or ""),
+    ).strip()
+
+    text = text.strip()
+
+    if not text:
+        return ""
+
+    # Remove lines containing only punctuation.
+    if not re.search(r"[A-Za-z0-9]", text):
+        return ""
+
+    return text
+
+
+def _v86_customer_to_block_address(input_path, result):
+    import re
+
+    try:
+        import fitz
+    except Exception:
+        return None
+
+    try:
+        document = fitz.open(str(input_path))
+    except Exception:
+        return None
+
+    try:
+        lines = []
+
+        # Customer information is normally in the first pages.
+        for page_index in range(
+            min(len(document), 2)
+        ):
+            try:
+                page_text = document[
+                    page_index
+                ].get_text("text")
+            except Exception:
+                continue
+
+            for raw_line in str(
+                page_text or ""
+            ).splitlines():
+
+                cleaned = (
+                    _v86_clean_block_line(
+                        raw_line
+                    )
+                )
+
+                if cleaned:
+                    lines.append(cleaned)
+
+    finally:
+        try:
+            document.close()
+        except Exception:
+            pass
+
+    if not lines:
+        return None
+
+    fields = (
+        result.get("fields", {})
+        if isinstance(result, dict)
+        else {}
+    )
+
+    customer_data = (
+        fields.get("CUSTOMER_NAME", {})
+        if isinstance(fields, dict)
+        else {}
+    )
+
+    if isinstance(customer_data, dict):
+        customer_name = str(
+            customer_data.get(
+                "value",
+                "",
+            )
+            or
+            ""
+        ).strip()
+    else:
+        customer_name = str(
+            customer_data or ""
+        ).strip()
+
+    customer_norm = re.sub(
+        r"[^a-z0-9]+",
+        " ",
+        customer_name.casefold(),
+    ).strip()
+
+    # Labels that indicate the customer address block is over.
+    stop_pattern = re.compile(
+        r"(?i)^("
+        r"gstin|"
+        r"cin|"
+        r"pan|"
+        r"state\s*code|"
+        r"state\s*name|"
+        r"place\s*of\s*supply|"
+        r"odn|"
+        r"po\s*(?:no|number)?|"
+        r"p\.?\s*o\.?|"
+        r"gr\s*(?:no|number)?|"
+        r"invoice|"
+        r"posting\s*date|"
+        r"due\s*date|"
+        r"rampur\s*unit|"
+        r"material|"
+        r"sl\s*no|"
+        r"dear\s+sir"
+        r")\b"
+    )
+
+    anchor_pattern = re.compile(
+        r"(?i)^(?:"
+        r"to|"
+        r"bill\s*to|"
+        r"billed\s*to|"
+        r"buyer|"
+        r"customer"
+        r")\s*[:\-]?\s*(.*)$"
+    )
+
+    for index, line in enumerate(lines):
+
+        match = anchor_pattern.match(
+            line.strip()
+        )
+
+        if not match:
+            continue
+
+        inline_customer = (
+            match.group(1).strip()
+        )
+
+        cursor = index + 1
+
+        # ----------------------------------------------------
+        # Identify customer name belonging to this block.
+        # ----------------------------------------------------
+
+        if inline_customer:
+            candidate_customer = (
+                inline_customer
+            )
+        elif cursor < len(lines):
+            candidate_customer = (
+                lines[cursor]
+            )
+            cursor += 1
+        else:
+            continue
+
+        candidate_norm = re.sub(
+            r"[^a-z0-9]+",
+            " ",
+            candidate_customer.casefold(),
+        ).strip()
+
+        # If a reliable CUSTOMER_NAME already exists, require
+        # the To/Bill-To block to refer to that same customer.
+        if customer_norm:
+            if (
+                customer_norm
+                not in candidate_norm
+                and
+                candidate_norm
+                not in customer_norm
+            ):
+                continue
+
+        address_lines = []
+
+        # Collect a conservative customer address block.
+        for next_index in range(
+            cursor,
+            min(
+                len(lines),
+                cursor + 7,
+            ),
+        ):
+
+            candidate = (
+                _v86_clean_block_line(
+                    lines[next_index]
+                )
+            )
+
+            if not candidate:
+                continue
+
+            # Values beginning with ":" are normally values
+            # belonging to GSTIN/PAN/state columns after the
+            # customer block in extracted PDF text.
+            if candidate.startswith(":"):
+                break
+
+            if stop_pattern.search(
+                candidate
+            ):
+                break
+
+            # Don't accidentally repeat customer name.
+            candidate_compare = re.sub(
+                r"[^a-z0-9]+",
+                " ",
+                candidate.casefold(),
+            ).strip()
+
+            if (
+                customer_norm
+                and
+                candidate_compare
+                ==
+                customer_norm
+            ):
+                continue
+
+            address_lines.append(
+                candidate.strip(" ,")
+            )
+
+            # Once a PIN code is reached the postal address is
+            # normally complete.
+            if re.search(
+                r"\b\d{6}\b",
+                candidate,
+            ):
+                break
+
+        if not address_lines:
+            continue
+
+        address = ", ".join(
+            part
+            for part in address_lines
+            if part
+        )
+
+        address = re.sub(
+            r"\s*,\s*,+",
+            ", ",
+            address,
+        )
+
+        address = re.sub(
+            r"\s+",
+            " ",
+            address,
+        ).strip(" ,")
+
+        # Require reasonable address evidence.
+        if len(address) < 10:
+            continue
+
+        if not (
+            re.search(
+                r"\d",
+                address,
+            )
+            or
+            re.search(
+                r"(?i)\b("
+                r"road|street|sector|"
+                r"nagar|floor|park|"
+                r"kolkata|delhi|mumbai|"
+                r"noida|gurugram|"
+                r"bengaluru|chennai"
+                r")\b",
+                address,
+            )
+        ):
+            continue
+
+        return address
+
+    return None
+
+
+def process_invoice_dynamic_final(
+    input_path,
+    *,
+    min_dynamic_confidence=DYNAMIC_MIN_CONFIDENCE,
+):
+    """
+    V8.6 final production wrapper.
+
+    Executes the complete existing engine unchanged, then gives
+    an explicit To/Bill-To customer address higher precedence
+    than a generic vendor/header address.
+    """
+
+    result = (
+        _PROCESS_INVOICE_DYNAMIC_FINAL_BEFORE_V86_ADDRESS_FIX(
+            input_path,
+            min_dynamic_confidence=
+                min_dynamic_confidence,
+        )
+    )
+
+    if not isinstance(result, dict):
+        return result
+
+    customer_address = (
+        _v86_customer_to_block_address(
+            input_path,
+            result,
+        )
+    )
+
+    if customer_address:
+
+        fields = result.setdefault(
+            "fields",
+            {},
+        )
+
+        existing = fields.get(
+            "ADDRESS",
+            {},
+        )
+
+        if not isinstance(
+            existing,
+            dict,
+        ):
+            existing = {}
+
+        fields["ADDRESS"] = {
+            "value":
+                customer_address,
+
+            "status":
+                "RULE_RECOVERED",
+
+            "source":
+                "V8_6_EXPLICIT_CUSTOMER_TO_BLOCK",
+
+            "origin":
+                "TRAINED_SCHEMA",
+
+            "field_name":
+                "ADDRESS",
+        }
+
+    return result
+
+
+# ============================================================
+# END V8.6 CUSTOMER ADDRESS FINAL GUARD
+# ============================================================
+
