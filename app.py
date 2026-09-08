@@ -25,12 +25,12 @@ os.environ["PADDLE_PDX_EAGER_INIT"] = "False"
 # STREAMLIT CLOUD OPENCV HEADLESS BOOTSTRAP
 # ============================================================
 #
-# PaddleX pulls opencv-contrib-python (GUI build).
-# Streamlit Cloud currently cannot reliably install libGL
-# through apt, so Linux cloud replaces that GUI wheel with
-# opencv-contrib-python-headless BEFORE invoice_engine loads.
+# PaddleX installs a GUI OpenCV build transitively.
+# Streamlit Cloud cannot currently rely on apt/libGL, so we
+# install a server-safe OpenCV build into writable /tmp.
 #
-# No model weights or inference logic are modified.
+# This executes BEFORE invoice_engine is imported.
+# It does NOT modify model/inference logic.
 # ============================================================
 
 def _prepare_streamlit_headless_opencv():
@@ -40,8 +40,14 @@ def _prepare_streamlit_headless_opencv():
     import tempfile
     from pathlib import Path
 
-    # Windows/local development does not need this workaround.
     if os.name == "nt":
+        return
+
+    # Streamlit reruns this file in the same Python process.
+    # If our working cv2 is already loaded, leave it untouched.
+    existing_cv2 = sys.modules.get("cv2")
+
+    if existing_cv2 is not None:
         return
 
     target = (
@@ -49,40 +55,12 @@ def _prepare_streamlit_headless_opencv():
         / "invoice_ai_opencv_standard_headless"
     )
 
-    marker = target / ".ready"
+    marker_path = (
+        target
+        / ".ready"
+    )
 
-    # --------------------------------------------------------
-    # STREAMLIT RERUN SAFETY
-    # --------------------------------------------------------
-    # If cv2 is already loaded successfully, NEVER unload or
-    # re-import it. Streamlit reruns app.py in the same process.
-    # --------------------------------------------------------
-
-    existing_cv2 = sys.modules.get("cv2")
-
-    if existing_cv2 is not None:
-        existing_file = str(
-            getattr(
-                existing_cv2,
-                "__file__",
-                "",
-            )
-            or
-            ""
-        )
-
-        if (
-            "invoice_ai_opencv_standard_headless"
-            in
-            existing_file
-        ):
-            return
-
-    # --------------------------------------------------------
-    # INSTALL HEADLESS OPENCV INTO WRITABLE /tmp
-    # --------------------------------------------------------
-
-    if not marker.exists():
+    if not marker_path.exists():
 
         print(
             "Preparing isolated headless OpenCV runtime..."
@@ -109,16 +87,14 @@ def _prepare_streamlit_headless_opencv():
             check=True,
         )
 
-        marker.write_text(
+        marker_path.write_text(
             "ready",
             encoding="utf-8",
         )
 
-    # --------------------------------------------------------
-    # PUT ISOLATED HEADLESS BUILD FIRST
-    # --------------------------------------------------------
-
-    target_string = str(target)
+    target_string = str(
+        target
+    )
 
     if target_string in sys.path:
         sys.path.remove(
@@ -131,11 +107,6 @@ def _prepare_streamlit_headless_opencv():
     )
 
     importlib.invalidate_caches()
-
-    # Important:
-    # Do NOT delete cv2 from sys.modules here.
-    # Re-importing OpenCV's extension inside the same Streamlit
-    # process caused the GAPI typing error we just observed.
 
     import cv2
 
@@ -151,6 +122,7 @@ def _prepare_streamlit_headless_opencv():
 
 
 _prepare_streamlit_headless_opencv()
+
 
 
 
@@ -181,7 +153,7 @@ from invoice_engine import (
 
 st.set_page_config(
     page_title="Invoice Intelligence AI",
-    page_icon="Ã°Å¸Â§Â¾",
+    page_icon="🧾",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -1257,7 +1229,7 @@ def initialize_engine():
     except Exception as error:
 
         st.error(
-            "Ã¢ÂÅ’ Production engine initialization failed"
+            "❌ Production engine initialization failed"
         )
 
         st.exception(
@@ -1940,7 +1912,7 @@ def clean_label_segment(
         r"\S+@\S+"
         r"|"
         r"[-+]?"
-        r"(?:Ã¢â€šÂ¹|Rs\.?|INR|\$)?"
+        r"(?:₹|Rs\.?|INR|\$)?"
         r"\d[\d,./%\-]*"
         r"|"
         r"[A-Z0-9/_\-]*\d[A-Z0-9/_\-]*"
@@ -2661,7 +2633,7 @@ def preview_pdf(
         st.caption(
             f"{document.page_count} page"
             f"{'s' if document.page_count != 1 else ''}"
-            " Ã¢â‚¬Â¢ rendered directly in the app"
+            " • rendered directly in the app"
         )
 
         for page_number in range(
@@ -3881,7 +3853,7 @@ def render_dynamic_fields(
                             "page"
                         )
                         or
-                        "Ã¢â‚¬â€"
+                        "—"
                     ),
 
                 "Source":
@@ -4867,7 +4839,7 @@ render_html(
         </div>
 
         <div class="hero-title">
-            Ã°Å¸Â§Â¾ Invoice Intelligence AI
+            🧾 Invoice Intelligence AI
         </div>
 
         <div class="hero-sub">
@@ -4897,7 +4869,7 @@ render_html(
 with st.sidebar:
 
     st.markdown(
-        "## Ã°Å¸Â§Â¾ Invoice AI V3"
+        "## 🧾 Invoice AI V3"
     )
 
     st.caption(
@@ -4905,7 +4877,7 @@ with st.sidebar:
     )
 
     st.success(
-        "Ã¢â€”Â Engine Ready"
+        "● Engine Ready"
     )
 
     left, right = st.columns(
@@ -5194,7 +5166,7 @@ with action_col:
     )
 
     process_clicked = st.button(
-        "Ã°Å¸Å¡â‚¬ Process Invoice",
+        "🚀 Process Invoice",
         type="primary",
         use_container_width=True,
     )
@@ -5222,7 +5194,7 @@ with action_col:
         except Exception as error:
 
             st.error(
-                "Ã¢ÂÅ’ Invoice processing failed"
+                "❌ Invoice processing failed"
             )
 
             st.exception(
@@ -5265,4 +5237,3 @@ if (
     render_results(
         current_result
     )
-
