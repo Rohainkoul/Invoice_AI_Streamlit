@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import html
 import json
@@ -46,7 +46,7 @@ def _prepare_streamlit_headless_opencv():
 
     target = (
         Path(tempfile.gettempdir())
-        / "invoice_ai_opencv_headless"
+        / "invoice_ai_opencv_standard_headless"
     )
 
     marker = (
@@ -78,7 +78,7 @@ def _prepare_streamlit_headless_opencv():
                 "--target",
                 str(target),
                 "--upgrade",
-                "opencv-contrib-python-headless==4.10.0.84",
+                "opencv-python-headless==4.10.0.84",
             ],
             check=True,
         )
@@ -161,7 +161,7 @@ from invoice_engine import (
 
 st.set_page_config(
     page_title="Invoice Intelligence AI",
-    page_icon="ðŸ§¾",
+    page_icon="Ã°Å¸Â§Â¾",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -1237,7 +1237,7 @@ def initialize_engine():
     except Exception as error:
 
         st.error(
-            "âŒ Production engine initialization failed"
+            "Ã¢ÂÅ’ Production engine initialization failed"
         )
 
         st.exception(
@@ -1920,7 +1920,7 @@ def clean_label_segment(
         r"\S+@\S+"
         r"|"
         r"[-+]?"
-        r"(?:â‚¹|Rs\.?|INR|\$)?"
+        r"(?:Ã¢â€šÂ¹|Rs\.?|INR|\$)?"
         r"\d[\d,./%\-]*"
         r"|"
         r"[A-Z0-9/_\-]*\d[A-Z0-9/_\-]*"
@@ -2641,7 +2641,7 @@ def preview_pdf(
         st.caption(
             f"{document.page_count} page"
             f"{'s' if document.page_count != 1 else ''}"
-            " â€¢ rendered directly in the app"
+            " Ã¢â‚¬Â¢ rendered directly in the app"
         )
 
         for page_number in range(
@@ -3861,7 +3861,7 @@ def render_dynamic_fields(
                             "page"
                         )
                         or
-                        "â€”"
+                        "Ã¢â‚¬â€"
                     ),
 
                 "Source":
@@ -4847,7 +4847,7 @@ render_html(
         </div>
 
         <div class="hero-title">
-            ðŸ§¾ Invoice Intelligence AI
+            Ã°Å¸Â§Â¾ Invoice Intelligence AI
         </div>
 
         <div class="hero-sub">
@@ -4877,7 +4877,7 @@ render_html(
 with st.sidebar:
 
     st.markdown(
-        "## ðŸ§¾ Invoice AI V3"
+        "## Ã°Å¸Â§Â¾ Invoice AI V3"
     )
 
     st.caption(
@@ -4885,7 +4885,7 @@ with st.sidebar:
     )
 
     st.success(
-        "â— Engine Ready"
+        "Ã¢â€”Â Engine Ready"
     )
 
     left, right = st.columns(
@@ -5174,7 +5174,7 @@ with action_col:
     )
 
     process_clicked = st.button(
-        "ðŸš€ Process Invoice",
+        "Ã°Å¸Å¡â‚¬ Process Invoice",
         type="primary",
         use_container_width=True,
     )
@@ -5202,7 +5202,7 @@ with action_col:
         except Exception as error:
 
             st.error(
-                "âŒ Invoice processing failed"
+                "Ã¢ÂÅ’ Invoice processing failed"
             )
 
             st.exception(
@@ -5245,3 +5245,4 @@ if (
     render_results(
         current_result
     )
+
