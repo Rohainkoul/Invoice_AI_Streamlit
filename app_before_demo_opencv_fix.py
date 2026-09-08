@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import html
 import json
@@ -20,99 +20,6 @@ from typing import Any
 
 os.environ["PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK"] = "True"
 os.environ["PADDLE_PDX_EAGER_INIT"] = "False"
-
-# ============================================================
-# STREAMLIT CLOUD OPENCV HEADLESS BOOTSTRAP
-# ============================================================
-#
-# PaddleX pulls opencv-contrib-python (GUI build).
-# Streamlit Cloud currently cannot reliably install libGL
-# through apt, so Linux cloud replaces that GUI wheel with
-# opencv-contrib-python-headless BEFORE invoice_engine loads.
-#
-# No model weights or inference logic are modified.
-# ============================================================
-
-def _prepare_streamlit_headless_opencv():
-    import importlib
-    import subprocess
-    import sys
-    import tempfile
-    from pathlib import Path
-
-    # Windows/local development does not need this workaround.
-    if os.name == "nt":
-        return
-
-    marker_path = (
-        Path(tempfile.gettempdir())
-        / "invoice_ai_cv2_headless_ready_v1"
-    )
-
-    # Streamlit reruns app.py frequently.
-    # Do the package correction only once per container.
-    if marker_path.exists():
-        return
-
-    print("Preparing server-safe OpenCV runtime...")
-
-    # PaddleX can install the GUI OpenCV wheel transitively.
-    # Remove GUI variants first because all OpenCV wheels share
-    # the same `cv2` namespace.
-    for package_name in (
-        "opencv-contrib-python",
-        "opencv-python",
-    ):
-        subprocess.run(
-            [
-                sys.executable,
-                "-m",
-                "pip",
-                "uninstall",
-                "-y",
-                package_name,
-            ],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            check=False,
-        )
-
-    # Reinstall the single cloud-safe implementation after the
-    # GUI uninstall, because uninstalling overlapping OpenCV
-    # wheels can remove shared cv2 files.
-    subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "pip",
-            "install",
-            "--disable-pip-version-check",
-            "--no-deps",
-            "--force-reinstall",
-            "opencv-contrib-python-headless==4.10.0.84",
-        ],
-        check=True,
-    )
-
-    importlib.invalidate_caches()
-
-    # Fail here with a clear error instead of much later inside
-    # PaddleOCR / Transformers.
-    import cv2
-
-    print(
-        "OpenCV ready:",
-        cv2.__version__,
-    )
-
-    marker_path.write_text(
-        "ready",
-        encoding="utf-8",
-    )
-
-
-_prepare_streamlit_headless_opencv()
-
 
 
 # ============================================================
@@ -142,7 +49,7 @@ from invoice_engine import (
 
 st.set_page_config(
     page_title="Invoice Intelligence AI",
-    page_icon="ðŸ§¾",
+    page_icon="🧾",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -1218,7 +1125,7 @@ def initialize_engine():
     except Exception as error:
 
         st.error(
-            "âŒ Production engine initialization failed"
+            "❌ Production engine initialization failed"
         )
 
         st.exception(
@@ -1901,7 +1808,7 @@ def clean_label_segment(
         r"\S+@\S+"
         r"|"
         r"[-+]?"
-        r"(?:â‚¹|Rs\.?|INR|\$)?"
+        r"(?:₹|Rs\.?|INR|\$)?"
         r"\d[\d,./%\-]*"
         r"|"
         r"[A-Z0-9/_\-]*\d[A-Z0-9/_\-]*"
@@ -2622,7 +2529,7 @@ def preview_pdf(
         st.caption(
             f"{document.page_count} page"
             f"{'s' if document.page_count != 1 else ''}"
-            " â€¢ rendered directly in the app"
+            " • rendered directly in the app"
         )
 
         for page_number in range(
@@ -3842,7 +3749,7 @@ def render_dynamic_fields(
                             "page"
                         )
                         or
-                        "â€”"
+                        "—"
                     ),
 
                 "Source":
@@ -4828,7 +4735,7 @@ render_html(
         </div>
 
         <div class="hero-title">
-            ðŸ§¾ Invoice Intelligence AI
+            🧾 Invoice Intelligence AI
         </div>
 
         <div class="hero-sub">
@@ -4858,7 +4765,7 @@ render_html(
 with st.sidebar:
 
     st.markdown(
-        "## ðŸ§¾ Invoice AI V3"
+        "## 🧾 Invoice AI V3"
     )
 
     st.caption(
@@ -4866,7 +4773,7 @@ with st.sidebar:
     )
 
     st.success(
-        "â— Engine Ready"
+        "● Engine Ready"
     )
 
     left, right = st.columns(
@@ -5155,7 +5062,7 @@ with action_col:
     )
 
     process_clicked = st.button(
-        "ðŸš€ Process Invoice",
+        "🚀 Process Invoice",
         type="primary",
         use_container_width=True,
     )
@@ -5183,7 +5090,7 @@ with action_col:
         except Exception as error:
 
             st.error(
-                "âŒ Invoice processing failed"
+                "❌ Invoice processing failed"
             )
 
             st.exception(
